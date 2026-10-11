@@ -2,12 +2,14 @@ package etcd_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
 	"testing"
 
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
+	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/t4db/t4"
@@ -681,5 +683,43 @@ func TestStatusReportsStorageVersion(t *testing.T) {
 	}
 	if resp.DbSize <= 0 {
 		t.Fatalf("DbSize=%d, want > 0", resp.DbSize)
+	}
+}
+
+// TestHashKV pins HashKV's etcd-facing revisions: wire revisions in and out,
+// -1 for a store never compacted, and ErrCompacted below the watermark.
+func TestHashKV(t *testing.T) {
+	srv := newServer(t)
+	ctx := context.Background()
+	put(t, srv, "/a", "1")
+	rev := put(t, srv, "/a", "2")
+
+	head, err := srv.HashKV(ctx, &etcdserverpb.HashKVRequest{})
+	if err != nil {
+		t.Fatalf("HashKV: %v", err)
+	}
+	if head.HashRevision != rev || head.Header.Revision != rev || head.CompactRevision != -1 {
+		t.Fatalf("HashKV at head = %+v, want hash revision %d and compact revision -1", head, rev)
+	}
+	prev, err := srv.HashKV(ctx, &etcdserverpb.HashKVRequest{Revision: rev - 1})
+	if err != nil {
+		t.Fatalf("HashKV(%d): %v", rev-1, err)
+	}
+	if prev.HashRevision != rev-1 || prev.Hash == head.Hash {
+		t.Fatalf("HashKV(%d) = %+v, want a different hash than head %+v", rev-1, prev, head)
+	}
+
+	if _, err := srv.Compact(ctx, &etcdserverpb.CompactionRequest{Revision: rev}); err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if _, err := srv.HashKV(ctx, &etcdserverpb.HashKVRequest{Revision: rev - 1}); !errors.Is(err, rpctypes.ErrGRPCCompacted) {
+		t.Fatalf("HashKV below the compact revision: got %v, want ErrGRPCCompacted", err)
+	}
+	compacted, err := srv.HashKV(ctx, &etcdserverpb.HashKVRequest{Revision: rev})
+	if err != nil {
+		t.Fatalf("HashKV(%d): %v", rev, err)
+	}
+	if compacted.CompactRevision != rev {
+		t.Fatalf("HashKV after compaction = %+v, want compact revision %d", compacted, rev)
 	}
 }

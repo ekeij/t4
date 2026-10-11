@@ -6,6 +6,9 @@ import istore "github.com/t4db/t4/internal/store"
 // KeyValue is a versioned key-value pair.
 type KeyValue = istore.KeyValue
 
+// KVHash is the result of Node.HashKV.
+type KVHash = istore.KVHash
+
 // EventType classifies a watch event.
 type EventType = istore.EventType
 
