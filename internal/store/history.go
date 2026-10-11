@@ -141,16 +141,6 @@ func (h *historyRing) reset() {
 	h.mu.Unlock()
 }
 
-// newest returns the newest retained revision.
-func (h *historyRing) newest() (int64, bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if len(h.revs) == 0 {
-		return 0, false
-	}
-	return h.revs[len(h.revs)-1].rev, true
-}
-
 // floor returns the oldest retained revision, for tests and diagnostics.
 func (h *historyRing) floor() (int64, bool) {
 	h.mu.Lock()

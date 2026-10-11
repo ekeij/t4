@@ -21,8 +21,6 @@ import (
 // has a superseded record that attached the key to that lease, and when
 // compaction drops such a record it drops the entry too unless the key is
 // still attached. Stale entries therefore last until the next compaction.
-// Recover, which overwrites the record of a key a newer term replaced rather
-// than superseding it, drops that key's entry itself.
 //
 // The index is local derived state, like the key index: it is not in the WAL,
 // and each node maintains its own as it applies entries. A binary that does
@@ -57,23 +55,6 @@ func (la *leaseApply) attach(b *pebble.Batch, key string, lease int64) error {
 		la.added = make(map[string]struct{})
 	}
 	la.added[string(k)] = struct{}{}
-	return nil
-}
-
-// discard writes into b the removal of key's entry under lease, for a record
-// Recover discards along with the key's index entry, unless this batch added
-// the entry.
-func (la *leaseApply) discard(b *pebble.Batch, key string, lease int64) error {
-	if lease <= 0 {
-		return nil
-	}
-	k := leaseIdxKey(lease, key)
-	if _, ok := la.added[string(k)]; ok {
-		return nil
-	}
-	if err := b.Delete(k, pebble.NoSync); err != nil {
-		return fmt.Errorf("store: delete lease idx %d %q: %w", lease, key, err)
-	}
 	return nil
 }
 

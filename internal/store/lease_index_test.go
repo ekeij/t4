@@ -152,22 +152,3 @@ func TestLeaseIndexRebuiltAfterIndexUnawareWrites(t *testing.T) {
 		t.Fatalf("lease index holds %d entries after rebuild, want 2", n)
 	}
 }
-
-// TestLeaseIndexTermConflictDropsDiscardedEntry covers Recover replacing a
-// record of an older term: the record is overwritten, not superseded, so no
-// compaction would ever drop its lease index entry.
-func TestLeaseIndexTermConflictDropsDiscardedEntry(t *testing.T) {
-	s := openMem(t)
-	const l1 = 101
-	if err := s.Recover([]wal.Entry{leased(createEntry(1, "alpha", nil), l1)}); err != nil {
-		t.Fatal(err)
-	}
-	requireLeaseKeys(t, s, l1, "alpha")
-	if err := s.Recover([]wal.Entry{{Revision: 1, Term: 2, Op: wal.OpCreate, Key: "beta", CreateRevision: 1}}); err != nil {
-		t.Fatal(err)
-	}
-	requireLeaseKeys(t, s, l1)
-	if n := leaseIdxEntries(t, s); n != 0 {
-		t.Fatalf("lease index holds %d entries, want 0", n)
-	}
-}
