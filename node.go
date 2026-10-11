@@ -1422,6 +1422,18 @@ func (n *Node) DBSize() (int64, error) {
 	return int64(n.db.Load().DiskSpaceUsage()), nil
 }
 
+// HashKV hashes this node's local key history up to rev (0 for the current
+// revision), as etcd's HashKV does, so replicas can be compared: two nodes
+// that applied the same log return the same hash for the same revision.
+func (n *Node) HashKV(rev int64) (KVHash, error) {
+	n.readMu.RLock()
+	defer n.readMu.RUnlock()
+	if n.closed.Load() {
+		return KVHash{}, ErrClosed
+	}
+	return n.db.Load().HashKV(rev)
+}
+
 func (n *Node) CurrentRevision() int64 { return n.db.Load().CurrentRevision() }
 func (n *Node) CompactRevision() int64 { return n.db.Load().CompactRevision() }
 func (n *Node) Config() Config         { return n.cfg }

@@ -513,8 +513,26 @@ func (s *Server) Defragment(_ context.Context, _ *etcdserverpb.DefragmentRequest
 func (s *Server) Hash(_ context.Context, _ *etcdserverpb.HashRequest) (*etcdserverpb.HashResponse, error) {
 	return nil, unimplemented()
 }
-func (s *Server) HashKV(_ context.Context, _ *etcdserverpb.HashKVRequest) (*etcdserverpb.HashKVResponse, error) {
-	return nil, unimplemented()
+
+// HashKV hashes this node's key history up to the requested revision, so
+// clients can check that replicas agree, as etcd members are checked. The
+// hash is comparable between T4 nodes only, not with etcd's.
+func (s *Server) HashKV(_ context.Context, r *etcdserverpb.HashKVRequest) (*etcdserverpb.HashKVResponse, error) {
+	h, err := s.node.HashKV(fromEtcdRevision(r.Revision))
+	if err != nil {
+		return nil, kvError(err)
+	}
+	// Like etcd, a store that was never compacted reports -1.
+	compactRev := int64(-1)
+	if h.CompactRevision > 0 {
+		compactRev = toEtcdRevision(h.CompactRevision)
+	}
+	return &etcdserverpb.HashKVResponse{
+		Header:          s.headerAt(h.CurrentRevision),
+		Hash:            h.Hash,
+		CompactRevision: compactRev,
+		HashRevision:    toEtcdRevision(h.Revision),
+	}, nil
 }
 func (s *Server) Snapshot(_ *etcdserverpb.SnapshotRequest, _ etcdserverpb.Maintenance_SnapshotServer) error {
 	return unimplemented()
