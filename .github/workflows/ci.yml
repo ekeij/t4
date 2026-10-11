@@ -118,6 +118,24 @@ jobs:
       - name: Test differential against etcd
         run: make test-etcd-diff
 
+  test-robustness-linux:
+    name: etcd robustness tests (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: tests/robustness/go.mod
+          cache: true
+          cache-dependency-path: tests/robustness/go.sum
+
+      # Single-node scenarios only: three-node ones need T4_ROBUSTNESS_S3.
+      - name: Test with etcd's robustness tests
+        run: make test-robustness
+
   s3-cli-smoke:
     name: S3 CLI Smoke
     runs-on: ubuntu-latest
