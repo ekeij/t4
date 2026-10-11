@@ -35,12 +35,13 @@
                  (gen/sleep 20)
                  {:type :info :f :stop}])}
 
-   ;; Kills and restarts the t4 process on a random node.
+   ;; Kills and restarts the t4 process on a random node. node-start-stopper
+   ;; runs its first fn on :start (the fault) and its second on :stop (heal).
    :kill
    {:nemesis  (nemesis/node-start-stopper
                 rand-nth
-                (fn start [test node] (db/start! test node))
-                (fn stop  [test node] (db/stop!  test node)))
+                (fn start [test node] (db/stop!  test node))
+                (fn stop  [test node] (db/start! test node)))
     :gen      (gen/cycle
                 [(gen/sleep 15)
                  {:type :info :f :start}
