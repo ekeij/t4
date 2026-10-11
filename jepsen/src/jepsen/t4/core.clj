@@ -13,7 +13,11 @@
             [knossos.model            :as model]
             [jepsen.t4
              [db     :as db]
-             [client :as client]]))
+             [client :as client]
+             [append :as append]
+             [wr     :as wr]
+             [watch  :as watch]
+             [set    :as set]]))
 
 ;; ── Nemeses ───────────────────────────────────────────────────────────────────
 
@@ -92,7 +96,7 @@
 
 (defn register-workload
   "CAS-register workload: verifies linearizability of read/write/cas on one key."
-  []
+  [_opts]
   {:client  (client/register-client)
    :checker (checker/compose
               {:linearizable (checker/linearizable
@@ -131,7 +135,7 @@
   cas-register models. Per-key linearizability is therefore implied: there
   is no schedule in which one key's value moves without the others moving
   to the same revision."
-  []
+  [_opts]
   {:client  (client/multi-register-client)
    :checker (checker/compose
               {:linearizable (checker/linearizable
@@ -147,16 +151,42 @@
                                  :value [(rand-multi-values)
                                          (rand-multi-values)]}))])})
 
+(defn- ported
+  "Wraps a workload ported from jepsen-io/etcd: adds the timeline and perf
+  checkers, and runs at ten times the register workloads' op rate. Elle and
+  set-full are not exponential in concurrency the way Knossos is."
+  [workload-fn]
+  (fn [opts]
+    (-> (workload-fn opts)
+        (update :checker #(checker/compose {:workload %
+                                            :timeline (timeline/html)
+                                            :perf     (checker/perf)}))
+        (assoc :stagger 0.1))))
+
 (def workloads
+  "Workload name → (fn [opts]) returning a map of
+
+    :client     the Jepsen client
+    :checker    its checker
+    :gen        the main-phase generator
+    :final-gen  the recovery-phase client generator; default: one :read per
+                client. nil runs none.
+    :stagger    mean seconds between ops; default 1.0"
   {:register       register-workload
-   :multi-register multi-register-workload})
+   :multi-register multi-register-workload
+   :append         (ported append/workload)
+   :wr             (ported wr/workload)
+   :watch          (ported watch/workload)
+   :set            (ported set/workload)})
 
 ;; ── Test constructor ──────────────────────────────────────────────────────────
 
 (defn t4-test
   [opts]
   (let [workload-name (or (:workload opts) :register)
-        workload      ((get workloads workload-name register-workload))
+        workload      ((get workloads workload-name register-workload) opts)
+        final-gen     (get workload :final-gen
+                           (gen/once {:type :invoke :f :read :value nil}))
         nemesis-name  (or (:nemesis opts) :partition-halves)
         nem           (get nemeses nemesis-name (:partition-halves nemeses))
         time-limit    (or (:time-limit opts) 120)]
@@ -172,14 +202,14 @@
        :generator (gen/phases
                     ;; Main test phase: interleave client ops with nemesis faults.
                     (->> (:gen workload)
-                         (gen/stagger 1.0)    ; ~1 op/s × 120 s ≈ 120 ops — low concurrency keeps Knossos WGL from OOMing during partitions
+                         (gen/stagger (:stagger workload 1.0)) ; register: ~1 op/s × 120 s ≈ 120 ops — low concurrency keeps Knossos WGL from OOMing during partitions
                          (gen/nemesis (:gen nem))
                          (gen/time-limit time-limit))
-                    ;; Recovery phase: let the cluster heal, then do a final read.
+                    ;; Recovery phase: let the cluster heal, then do a final read
+                    ;; (or the workload's own final ops).
                     (gen/log "waiting for recovery")
                     (gen/sleep 15)
-                    (gen/clients
-                      (gen/once {:type :invoke :f :read :value nil})))}
+                    (gen/clients final-gen))}
       ;; Strip keys we've already resolved so their raw keyword values
       ;; (e.g. :nemesis :partition-halves) don't overwrite the objects above.
       (dissoc opts :nemesis :workload))))
@@ -189,7 +219,7 @@
 (def cli-opts
   "Extra CLI options beyond Jepsen's defaults."
   [[nil "--workload NAME"
-    "Workload to run: register (default) | multi-register"
+    "Workload to run: register (default) | multi-register | append | wr | watch | set"
     :default :register
     :parse-fn keyword]
    [nil "--nemesis NAME"

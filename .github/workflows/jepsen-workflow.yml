@@ -9,10 +9,10 @@ on:
         required: false
         default: '["partition-halves", "kill", "partition-s3"]'
       workloads:
-        description: 'JSON-encoded list of workloads to run, e.g. ["register"]. Defaults to both.'
+        description: 'JSON-encoded list of workloads to run, e.g. ["register"]. Defaults to all of them.'
         type: string
         required: false
-        default: '["register", "multi-register"]'
+        default: '["register", "multi-register", "append", "wr", "watch", "set"]'
 
 jobs:
   jepsen:
