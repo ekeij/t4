@@ -61,6 +61,10 @@ Txn(ctx context.Context, req TxnRequest) (TxnResponse, error)
 ```go
 // TxnRequest is the input to Node.Txn.
 type TxnRequest struct {
+    // Guards must all hold for the txn to run at all. If one does not,
+    // nothing is written and Txn returns ErrTxnGuard.
+    Guards []TxnCondition
+
     // Conditions are evaluated atomically. All must pass for Success to run.
     Conditions []TxnCondition
 
@@ -80,10 +84,10 @@ type TxnResponse struct {
 
 // TxnOp is one write operation in a transaction branch.
 type TxnOp struct {
-    Type  TxnOpType // TxnPut or TxnDelete
-    Key   string
-    Value []byte // used for TxnPut
-    Lease int64  // used for TxnPut; must reference a live lease, or 0
+    Type  TxnOpType // TxnPut, TxnDelete or TxnDeleteLease
+    Key   string    // unused for TxnDeleteLease
+    Value []byte    // used for TxnPut
+    Lease int64     // used for TxnPut (must reference a live lease, or 0) and TxnDeleteLease
 }
 
 // TxnOpType identifies the kind of operation within a transaction branch.
@@ -92,6 +96,9 @@ type TxnOpType uint8
 const (
     TxnPut    TxnOpType = iota // upsert: create or replace key
     TxnDelete                  // unconditional delete
+    // TxnDeleteLease deletes every key attached to Lease when the txn
+    // commits, including keys attached by concurrent writes.
+    TxnDeleteLease TxnOpType = 4
 )
 
 // TxnCondition is one predicate in the If clause.

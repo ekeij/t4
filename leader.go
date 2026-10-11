@@ -439,8 +439,8 @@ func (n *Node) HandleForward(ctx context.Context, req *peer.ForwardRequest) (*pe
 }
 
 // v1ForwardSupported reports whether a v1.1 leader understands req: it had no
-// meta forward ops, txn conditions up to TxnCondLease, and txn ops up to
-// TxnDelete. It ignored anything newer instead of rejecting it.
+// meta forward ops, txn guards, txn conditions up to TxnCondLease, and txn ops
+// up to TxnDelete. It ignored anything newer instead of rejecting it.
 func v1ForwardSupported(req *peer.ForwardRequest) error {
 	if req.Op > peer.ForwardTxn {
 		// A v1.1 leader's HandleForward rejects unknown ops with exactly this.
@@ -448,6 +448,9 @@ func v1ForwardSupported(req *peer.ForwardRequest) error {
 	}
 	if req.TxnReq == nil {
 		return nil
+	}
+	if len(req.TxnReq.Guards) > 0 {
+		return fmt.Errorf("t4: txn guards are unknown to a v1.1 leader")
 	}
 	for _, c := range req.TxnReq.Conditions {
 		if TxnCondTarget(c.Target) > TxnCondLease {

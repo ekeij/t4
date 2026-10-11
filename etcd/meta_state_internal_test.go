@@ -208,3 +208,42 @@ func TestLegacyDatabaseKeepsLeaseAndAuthInDataKeys(t *testing.T) {
 		t.Fatalf("root password after reopen: %v", err)
 	}
 }
+
+// TestLegacyLeaseRevokeKeepsDetachedKey checks that on a legacy database,
+// where revoke cannot use TxnDeleteLease, a key re-put without the lease
+// while the lease is revoked still survives the revoke.
+func TestLegacyLeaseRevokeKeepsDetachedKey(t *testing.T) {
+	node := openStateNode(t, nil, t.TempDir(), true)
+	if on, err := node.MetaEnabled(); err != nil || on {
+		t.Fatalf("MetaEnabled = %v, %v; want a legacy database", on, err)
+	}
+	cli := serveEtcd(t, node)
+	ctx := stateCtx(t)
+	for range 100 {
+		g, err := cli.Grant(ctx, 60)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := cli.Put(ctx, "/k", "leased", clientv3.WithLease(g.ID)); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() {
+			_, err := cli.Revoke(ctx, g.ID)
+			done <- err
+		}()
+		if _, err := cli.Put(ctx, "/k", "plain"); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-done; err != nil {
+			t.Fatalf("revoke: %v", err)
+		}
+		r, err := cli.Get(ctx, "/k")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(r.Kvs) != 1 || r.Kvs[0].Lease != 0 {
+			t.Fatalf("after revoke raced an unleased put, /k = %v, want the unleased value", r.Kvs)
+		}
+	}
+}

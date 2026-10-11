@@ -81,10 +81,11 @@ func (s *Server) LeaseRevoke(ctx context.Context, r *etcdserverpb.LeaseRevokeReq
 	if _, err := s.getLease(ctx, r.ID, true); err != nil {
 		return nil, err
 	}
-	if err := s.revokeLease(ctx, r.ID); err != nil {
+	rev, err := s.revokeLease(ctx, r.ID)
+	if err != nil {
 		return nil, err
 	}
-	return &etcdserverpb.LeaseRevokeResponse{Header: s.header()}, nil
+	return &etcdserverpb.LeaseRevokeResponse{Header: s.headerAt(rev)}, nil
 }
 
 func (s *Server) LeaseKeepAlive(stream etcdserverpb.Lease_LeaseKeepAliveServer) error {
@@ -98,7 +99,7 @@ func (s *Server) LeaseKeepAlive(stream etcdserverpb.Lease_LeaseKeepAliveServer) 
 			return err
 		}
 		rec.ExpiryUnixNs = time.Now().Add(time.Duration(rec.GrantedTTL) * time.Second).UnixNano()
-		if err := s.putLease(stream.Context(), rec); err != nil {
+		if err := s.refreshLease(stream.Context(), rec); err != nil {
 			return err
 		}
 		if err := stream.Send(&etcdserverpb.LeaseKeepAliveResponse{

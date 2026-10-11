@@ -10,6 +10,8 @@ import (
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	t4etcd "github.com/t4db/t4/etcd"
 )
 
 // TestLeaseGrantConcurrentExplicitSameIDRejected exercises the v1 contract
@@ -65,5 +67,99 @@ func TestLeaseGrantConcurrentExplicitSameIDRejected(t *testing.T) {
 	}
 	if got := unexpectedErrs.Load(); got != 0 {
 		t.Errorf("unexpected errors: %d", got)
+	}
+}
+
+// raceRevoke revokes a fresh lease concurrently with write, rounds times.
+// setup attaches whatever the round needs to the lease first.
+func raceRevoke(t *testing.T, srv *t4etcd.Server, rounds int, setup func(lease int64), write func(lease int64), check func(lease int64)) {
+	t.Helper()
+	ctx := context.Background()
+	for range rounds {
+		g, err := srv.LeaseGrant(ctx, &etcdserverpb.LeaseGrantRequest{TTL: 60})
+		if err != nil {
+			t.Fatal(err)
+		}
+		setup(g.ID)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if _, err := srv.LeaseRevoke(ctx, &etcdserverpb.LeaseRevokeRequest{ID: g.ID}); err != nil {
+				t.Errorf("revoke: %v", err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			write(g.ID)
+		}()
+		wg.Wait()
+		check(g.ID)
+	}
+}
+
+// TestLeaseRevokeRacesDetachingPut pins that a revoke deletes only keys still
+// attached to the lease when it commits: a key re-put without the lease
+// concurrently must exist afterwards, whichever went first.
+func TestLeaseRevokeRacesDetachingPut(t *testing.T) {
+	srv := newServer(t)
+	ctx := context.Background()
+	raceRevoke(t, srv, 200,
+		func(lease int64) {
+			if _, err := srv.Put(ctx, &etcdserverpb.PutRequest{Key: []byte("/k"), Value: []byte("leased"), Lease: lease}); err != nil {
+				t.Fatal(err)
+			}
+		},
+		func(int64) {
+			if _, err := srv.Put(ctx, &etcdserverpb.PutRequest{Key: []byte("/k"), Value: []byte("plain")}); err != nil {
+				t.Errorf("put: %v", err)
+			}
+		},
+		func(int64) {
+			r, err := srv.Range(ctx, &etcdserverpb.RangeRequest{Key: []byte("/k")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(r.Kvs) != 1 || r.Kvs[0].Lease != 0 {
+				t.Fatalf("after revoke raced an unleased put, /k = %v, want the unleased value", r.Kvs)
+			}
+		})
+}
+
+// TestLeaseRevokeRacesAttachingWrite pins that a key cannot outlive its lease:
+// a put or txn attaching it while the lease is revoked either fails or has
+// its key deleted by the revoke.
+func TestLeaseRevokeRacesAttachingWrite(t *testing.T) {
+	srv := newServer(t)
+	ctx := context.Background()
+	for name, write := range map[string]func(lease int64) error{
+		"put": func(lease int64) error {
+			_, err := srv.Put(ctx, &etcdserverpb.PutRequest{Key: []byte("/o"), Value: []byte("v"), Lease: lease})
+			return err
+		},
+		"txn": func(lease int64) error {
+			_, err := srv.Txn(ctx, &etcdserverpb.TxnRequest{Success: []*etcdserverpb.RequestOp{{
+				Request: &etcdserverpb.RequestOp_RequestPut{RequestPut: &etcdserverpb.PutRequest{Key: []byte("/o"), Value: []byte("v"), Lease: lease}},
+			}}})
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raceRevoke(t, srv, 200, func(int64) {},
+				func(lease int64) {
+					if err := write(lease); err != nil && status.Code(err) != codes.NotFound {
+						t.Errorf("write: %v", err)
+					}
+				},
+				func(lease int64) {
+					r, err := srv.Range(ctx, &etcdserverpb.RangeRequest{Key: []byte("/o")})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(r.Kvs) != 0 {
+						t.Fatalf("/o outlived its revoked lease %d: %v", lease, r.Kvs)
+					}
+				})
+		})
 	}
 }
