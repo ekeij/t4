@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -23,38 +24,23 @@ import (
 // (typically db.LastSequence()); filtering by Sequence rather than Revision
 // is required after the seq/rev split because Compact entries carry the
 // same Revision as the preceding data write but a distinct Sequence.
+//
+// The pinned segments may include a deposed leader's segment that overlaps
+// the term that replaced it; they are merged like replayRemote's.
 func replayPinned(ctx context.Context, db *istore.Store, rp *RestorePoint, afterSeq int64, log Logger) error {
-	for _, seg := range rp.WALSegments {
-		rc, err := rp.Store.GetVersioned(ctx, seg.Key, seg.VersionID)
-		if err != nil {
-			return fmt.Errorf("replayPinned get %q@%s: %w", seg.Key, seg.VersionID, err)
-		}
-		sr, err := wal.NewSegmentReader(rc)
-		if err != nil {
-			_ = rc.Close()
-			return fmt.Errorf("replayPinned segment %q: %w", seg.Key, err)
-		}
-		entries, readErr := sr.ReadAll()
-		_ = rc.Close()
-		if errors.Is(readErr, wal.ErrUnknownOp) {
-			return fmt.Errorf("replayPinned segment %q: %w", seg.Key, readErr)
-		}
-		if readErr != nil {
-			log.Warnf("t4: partial pinned segment %q: %v", seg.Key, readErr)
-		}
-		var applicable []wal.Entry
-		for _, e := range entries {
-			if e.Sequence() > afterSeq {
-				applicable = append(applicable, *e)
-			}
-		}
-		if len(applicable) > 0 {
-			if err := db.Recover(applicable); err != nil {
-				return err
-			}
-		}
+	keys := make([]string, len(rp.WALSegments))
+	for i, seg := range rp.WALSegments {
+		keys[i] = seg.Key
 	}
-	return nil
+	open := func(i int) (io.ReadCloser, error) {
+		seg := rp.WALSegments[i]
+		return rp.Store.GetVersioned(ctx, seg.Key, seg.VersionID)
+	}
+	merged, err := mergeWALSegments(keys, open, afterSeq, "replayPinned", log)
+	if err != nil || len(merged) == 0 {
+		return err
+	}
+	return db.Recover(merged)
 }
 
 // restoreDBIfBehindCheckpoint checks whether the node's Pebble database is
@@ -191,7 +177,18 @@ func replayRemote(ctx context.Context, db *istore.Store, obj object.Store, after
 	if err != nil {
 		return err
 	}
+	open := func(i int) (io.ReadCloser, error) { return obj.Get(ctx, keys[i]) }
+	merged, err := mergeWALSegments(keys, open, afterSeq, "replayRemote", log)
+	if err != nil || len(merged) == 0 {
+		return err
+	}
+	return db.Recover(merged)
+}
 
+// mergeWALSegments reads the WAL segments at object keys, opened through
+// open, and returns their entries with Sequence > afterSeq as one history in
+// sequence order. what names the caller in errors and logs.
+func mergeWALSegments(keys []string, open func(i int) (io.ReadCloser, error), afterSeq int64, what string, log Logger) ([]wal.Entry, error) {
 	// Build per-term cutoffs to handle leader-change conflicts.
 	//
 	// When a new leader takes over at sequence X, it starts writing a new term
@@ -206,26 +203,26 @@ func replayRemote(ctx context.Context, db *istore.Store, obj object.Store, after
 	cutoff := walTermCutoffs(keys)
 
 	var all []wal.Entry
-	for _, key := range keys {
+	for i, key := range keys {
 		term, _ := parseWALKey(key)
 		termCutoff := cutoff[term]
 
-		rc, err := obj.Get(ctx, key)
+		rc, err := open(i)
 		if err != nil {
-			return fmt.Errorf("replayRemote get %q: %w", key, err)
+			return nil, fmt.Errorf("%s get %q: %w", what, key, err)
 		}
 		sr, err := wal.NewSegmentReader(rc)
 		if err != nil {
 			_ = rc.Close()
-			return fmt.Errorf("replayRemote segment %q: %w", key, err)
+			return nil, fmt.Errorf("%s segment %q: %w", what, key, err)
 		}
 		entries, readErr := sr.ReadAll()
 		_ = rc.Close()
 		if errors.Is(readErr, wal.ErrUnknownOp) {
-			return fmt.Errorf("replayRemote segment %q: %w", key, readErr)
+			return nil, fmt.Errorf("%s segment %q: %w", what, key, readErr)
 		}
 		if readErr != nil {
-			log.Warnf("t4: partial remote segment %q: %v", key, readErr)
+			log.Warnf("t4: %s: partial segment %q: %v", what, key, readErr)
 		}
 		for _, e := range entries {
 			if e.Sequence() <= afterSeq {
@@ -239,7 +236,7 @@ func replayRemote(ctx context.Context, db *istore.Store, obj object.Store, after
 	}
 
 	if len(all) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Ensure deterministic order and resolve same-revision duplicates by
@@ -266,15 +263,11 @@ func replayRemote(ctx context.Context, db *istore.Store, obj object.Store, after
 	expected := afterSeq + 1
 	for _, e := range merged {
 		if e.Sequence() != expected {
-			return fmt.Errorf("replayRemote: missing sequence(s): expected %d got %d", expected, e.Sequence())
+			return nil, fmt.Errorf("%s: missing sequence(s): expected %d got %d", what, expected, e.Sequence())
 		}
 		expected++
 	}
-
-	if err := db.Recover(merged); err != nil {
-		return err
-	}
-	return nil
+	return merged, nil
 }
 
 // walTermCutoffs returns a map from term to the minimum first sequence of any

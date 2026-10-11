@@ -193,82 +193,59 @@ func TestCompactHighCardinalityHistory(t *testing.T) {
 	}
 }
 
-// ── Term-conflict index cleanup ───────────────────────────────────────────────
+// ── Revision rewrites ────────────────────────────────────────────────────────
 
-// TestApplyEntryTermConflictCleansStaleIndex is the regression test for the
-// term-conflict index corruption bug.  When two WAL terms both write a different
-// key at the same revision (which happens after a leader takeover), applying the
-// newer-term entry must not leave a stale index entry pointing to the old key.
-func TestApplyEntryTermConflictCleansStaleIndex(t *testing.T) {
-	s := openMem(t)
+// TestRecoverRejectsRevisionRewrite checks that Recover refuses an entry at a
+// revision the store already holds, whether from an earlier call or earlier
+// in the same batch, and leaves the store as it was. Undoing a newer term's
+// rewrite would need the older term's later records and counters reverted
+// too; deleting index entries instead silently lost keys.
+func TestRecoverRejectsRevisionRewrite(t *testing.T) {
+	setup := func(t *testing.T) *Store {
+		s := openMem(t)
+		if err := s.Recover([]wal.Entry{
+			createEntry(1, "alpha", []byte("a1")),
+			updateEntry(2, "alpha", []byte("a2"), 1, 1),
+		}); err != nil {
+			t.Fatalf("Recover term-1 entries: %v", err)
+		}
+		return s
+	}
+	term2 := func(e wal.Entry) wal.Entry { e.Term = 2; return e }
 
-	// Term-1 creates "alpha" at rev 1, then updates it at rev 2.
-	// After this, idx["alpha"] = 2.
-	if err := s.Recover([]wal.Entry{
-		createEntry(1, "alpha", []byte("a-v1")),
-		{Revision: 2, Term: 1, Op: wal.OpUpdate, Key: "alpha", Value: []byte("a-v2"), CreateRevision: 1, PrevRevision: 1},
-	}); err != nil {
-		t.Fatalf("Recover term-1 entries: %v", err)
-	}
-
-	// Term-2 takes over and writes a completely different key "beta" at rev 2.
-	// This simulates replayRemote applying a newer-term segment that conflicts
-	// with an older-term segment at the same revision.
-	if err := s.Recover([]wal.Entry{
-		{Revision: 2, Term: 2, Op: wal.OpCreate, Key: "beta", Value: []byte("b-v2"), CreateRevision: 2},
-	}); err != nil {
-		t.Fatalf("Recover term-2 entry: %v", err)
-	}
-
-	// "beta" must be readable at its new-term value.
-	kv, err := s.Get("beta")
-	if err != nil {
-		t.Fatalf("Get beta: %v", err)
-	}
-	if kv == nil || string(kv.Value) != "b-v2" {
-		t.Errorf("beta: want b-v2, got %v", kv)
-	}
-
-	// "alpha" must not be accessible via a stale index entry pointing at rev 2
-	// (which now belongs to "beta").  A stale pointer would return beta's data
-	// under alpha's key, or corrupt the store's internal state on the next Get.
-	kv, err = s.Get("alpha")
-	if err != nil {
-		t.Fatalf("Get alpha: %v", err)
-	}
-	if kv != nil && kv.Revision == 2 {
-		t.Errorf("alpha has stale index at rev 2 (rev 2 now belongs to beta); got %+v", kv)
-	}
-}
-
-// TestApplyEntryTermConflictSameKey verifies that when two terms write the same
-// key at the same revision (common case: same key, different value), the newer
-// term's value wins and no index corruption occurs.
-func TestApplyEntryTermConflictSameKey(t *testing.T) {
-	s := openMem(t)
-
-	if err := s.Recover([]wal.Entry{
-		{Revision: 1, Term: 1, Op: wal.OpCreate, Key: "k", Value: []byte("t1"), CreateRevision: 1},
-	}); err != nil {
-		t.Fatalf("Recover term-1: %v", err)
-	}
-
-	// Term-2 writes the same key at the same revision with a different value.
-	if err := s.Recover([]wal.Entry{
-		{Revision: 1, Term: 2, Op: wal.OpCreate, Key: "k", Value: []byte("t2"), CreateRevision: 1},
-	}); err != nil {
-		t.Fatalf("Recover term-2: %v", err)
-	}
-
-	kv, err := s.Get("k")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if kv == nil || string(kv.Value) != "t2" {
-		t.Errorf("want term-2 value t2, got %v", kv)
-	}
-	if kv.Revision != 1 {
-		t.Errorf("Revision: want 1 got %d", kv.Revision)
+	for name, entries := range map[string][]wal.Entry{
+		"other key": {term2(createEntry(2, "beta", []byte("b2")))},
+		"same key":  {term2(updateEntry(2, "alpha", []byte("a2'"), 1, 1))},
+		"txn": {term2(wal.Entry{Revision: 2, Op: wal.OpTxn, Value: wal.EncodeTxnOps([]wal.TxnSubOp{
+			{Op: wal.OpCreate, Key: "beta", Value: []byte("b2"), CreateRevision: 2},
+		})})},
+		"within batch": {
+			createEntry(3, "beta", []byte("b3")),
+			term2(createEntry(3, "gamma", []byte("c3"))),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := setup(t)
+			err := s.Recover(entries)
+			if !errors.Is(err, errRevisionRewrite) {
+				t.Fatalf("Recover: want errRevisionRewrite, got %v", err)
+			}
+			kv, err := s.Get("alpha")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kv == nil || string(kv.Value) != "a2" {
+				t.Fatalf("alpha = %+v, want a2", kv)
+			}
+			for _, key := range []string{"beta", "gamma"} {
+				if kv, err := s.Get(key); err != nil || kv != nil {
+					t.Fatalf("%s = %+v, %v; want absent", key, kv, err)
+				}
+			}
+			if got := s.CurrentRevision(); got != 2 {
+				t.Fatalf("CurrentRevision = %d, want 2", got)
+			}
+		})
 	}
 }
 

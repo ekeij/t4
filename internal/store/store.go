@@ -595,16 +595,20 @@ func (s *Store) commitBatch(b *pebble.Batch, maxRev, maxSeq int64, tip Position,
 	return nil
 }
 
+// errRevisionRewrite reports a recovered entry at a revision the store
+// already holds.
+var errRevisionRewrite = errors.New("store: entry rewrites an applied revision")
+
 // Recover applies entries without broadcasting to watchers. Used during
 // startup replay and by follower resync and leader catch-up, which run on the
 // live store, so it feeds the history ring like Apply: a ring that skipped
 // these revisions would still claim to cover pins below them.
 //
-// A term-conflict rewrite invalidates what the ring knows from the revision
-// it rewrites on. A batch rewriting a revision the ring holds clears the ring
-// and refills it from the batch; a batch rewriting one of its own revisions
-// cannot be ordered and leaves the ring empty. Either way the ring changes
-// before the commit, so no snapshot holding the batch meets a stale ring.
+// Recover only extends history: an entry consuming a revision at or below
+// the store's current one, or below one earlier in the batch, fails it with
+// errRevisionRewrite and nothing is applied. Callers resolve term conflicts
+// before replaying (mergeWALSegments); undoing one here would need the
+// older term's later records, counters and meta writes reverted too.
 func (s *Store) Recover(entries []wal.Entry) error {
 	if len(entries) == 0 {
 		return nil
@@ -615,10 +619,7 @@ func (s *Store) Recover(entries []wal.Entry) error {
 	var la leaseApply
 	ring := s.hist.Load()
 	var hist histBatch
-	// histTip is the newest data revision fed to hist; ordered stays true
-	// while the batch's revisions strictly increase.
-	var histTip int64
-	ordered := true
+	appliedRev := s.CurrentRevision()
 	for i := range entries {
 		e := &entries[i]
 		if seq := e.Sequence(); seq > maxSeq {
@@ -633,86 +634,36 @@ func (s *Store) Recover(entries []wal.Entry) error {
 			}
 		} else if !consumesRev {
 			// Meta-only entries carry the revision of the preceding data
-			// write: the term-conflict cleanup below would delete that write.
+			// write and consume none, so the rewrite check does not apply.
 			if err := s.applyEntry(b, &la, e); err != nil {
 				_ = b.Close()
 				return err
 			}
 		} else {
-			// Term-conflict cleanup: during WAL replay after a leader change, a
-			// newer term may write a different key at the same revision as the
-			// old term. Remove any stale index pointer before overwriting the
-			// log entry so idx[oldKey]=rev doesn't dangle.
-			//
-			// For OpTxn entries we must also purge any stale sub-keys at this
-			// revision written by a previous term (single-key or txn).
-			if e.Op == wal.OpTxn {
-				// Delete all existing log entries in [logKey(rev), logKey(rev+1))
-				// and remove any dangling idx pointers they reference.
-				lo := logKey(e.Revision)
-				hi := logKey(e.Revision + 1)
-				iter, iterErr := s.db.NewIter(&pebble.IterOptions{LowerBound: lo, UpperBound: hi})
-				if iterErr == nil {
-					for iter.First(); iter.Valid(); iter.Next() {
-						if stale, serr := unmarshalRecord(iter.Value()); serr == nil && !stale.delete {
-							_ = b.Delete(idxKey(stale.key), pebble.NoSync)
-							_ = la.discard(b, stale.key, stale.lease)
-						}
-						_ = b.Delete(iter.Key(), pebble.NoSync)
-					}
-					iter.Close()
-				}
-			} else {
-				if old, closer, err := s.db.Get(logKey(e.Revision)); err == nil {
-					r, rerr := unmarshalRecord(old)
-					closer.Close()
-					if rerr == nil && !r.delete && r.key != e.Key {
-						if err := b.Delete(idxKey(r.key), pebble.NoSync); err != nil {
-							b.Close()
-							return fmt.Errorf("store: cleanup stale idx %q rev=%d: %w", r.key, e.Revision, err)
-						}
-						if err := la.discard(b, r.key, r.lease); err != nil {
-							_ = b.Close()
-							return err
-						}
-					}
-				}
+			if e.Revision <= appliedRev {
+				_ = b.Close()
+				return fmt.Errorf("%w: seq=%d term=%d rev=%d after rev %d",
+					errRevisionRewrite, e.Sequence(), e.Term, e.Revision, appliedRev)
 			}
 			if err := s.applyEntry(b, &la, e); err != nil {
-				b.Close()
+				_ = b.Close()
 				return err
 			}
-			if ring != nil && ordered {
-				if e.Revision <= histTip {
-					ordered = false
-				} else {
-					cs, err := histChangesOf(e)
-					if err != nil {
-						_ = b.Close()
-						return err
-					}
-					hist.add(e.Revision, cs)
-					histTip = e.Revision
+			if ring != nil {
+				cs, err := histChangesOf(e)
+				if err != nil {
+					_ = b.Close()
+					return err
 				}
+				hist.add(e.Revision, cs)
 			}
+			appliedRev = e.Revision
 		}
 		if consumesRev && e.Revision > maxRev {
 			maxRev = e.Revision
 		}
 	}
-	var histChanges []histRev
-	if ring != nil {
-		histChanges = hist.done()
-		newest, ok := ring.newest()
-		switch {
-		case !ordered:
-			ring.reset()
-			histChanges = nil
-		case ok && len(histChanges) > 0 && histChanges[0].rev <= newest:
-			ring.reset()
-		}
-	}
-	return s.commitBatch(b, maxRev, maxSeq, tip, false, true, histChanges)
+	return s.commitBatch(b, maxRev, maxSeq, tip, false, true, hist.done())
 }
 
 // applyEntry writes e into b.
