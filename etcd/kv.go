@@ -235,12 +235,32 @@ func (s *Server) Put(ctx context.Context, r *etcdserverpb.PutRequest) (*etcdserv
 		}
 	}
 
-	commitRev, err := s.node.Put(ctx, key, r.Value, r.Lease)
+	commitRev, err := s.putKey(ctx, key, r.Value, r.Lease)
 	if err != nil {
 		return nil, kvError(err)
 	}
 	resp.Header = s.headerAt(commitRev)
 	return resp, nil
+}
+
+// putKey writes key, guarded on its lease still existing when the write
+// commits: one revoked after the lease was checked must not get the key.
+func (s *Server) putKey(ctx context.Context, key string, value []byte, lease int64) (int64, error) {
+	guards, err := s.leaseGuards(ctx, lease)
+	if err != nil {
+		return 0, err
+	}
+	if len(guards) == 0 {
+		return s.node.Put(ctx, key, value, lease)
+	}
+	resp, err := s.node.Txn(ctx, t4.TxnRequest{
+		Guards:  guards,
+		Success: []t4.TxnOp{{Type: t4.TxnPut, Key: key, Value: value, Lease: lease}},
+	})
+	if errors.Is(err, t4.ErrTxnGuard) {
+		return 0, errLeaseNotFound
+	}
+	return resp.Revision, err
 }
 
 // DeleteRange implements KVServer.DeleteRange.
@@ -373,12 +393,29 @@ func (s *Server) Txn(ctx context.Context, r *etcdserverpb.TxnRequest) (*etcdserv
 		return nil, err
 	}
 
+	// The checks above are not atomic with the write: guard on the leases
+	// still existing when it commits.
+	var leases []int64
+	for _, op := range slices.Concat(successOps, failureOps) {
+		if op.Type == t4.TxnPut {
+			leases = append(leases, op.Lease)
+		}
+	}
+	guards, err := s.leaseGuards(ctx, leases...)
+	if err != nil {
+		return nil, err
+	}
+
 	// Execute the atomic write portion.
 	txnResp, err := s.node.Txn(ctx, t4.TxnRequest{
+		Guards:     guards,
 		Conditions: conds,
 		Success:    successOps,
 		Failure:    failureOps,
 	})
+	if errors.Is(err, t4.ErrTxnGuard) {
+		return nil, errLeaseNotFound
+	}
 	if err != nil {
 		return nil, err
 	}

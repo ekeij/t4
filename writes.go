@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -497,6 +498,22 @@ func (n *Node) txnLocal(ctx context.Context, req TxnRequest) (TxnResponse, error
 	prepareDuration := time.Since(prepareStart)
 	kind := stats.kind()
 	compare := txnCompareLabel(succeeded)
+	if errors.Is(err, ErrTxnGuard) && (observed.rev > n.db.Load().CurrentRevision() || observed.metaToken != 0) {
+		// The guard failed on a write still being committed, which may yet
+		// fail: answer once it commits, and evaluate again if it does not.
+		aborted := n.abortedBatches
+		n.mu.Unlock()
+		observeTxnPreparation(lockWait, prepareDuration, kind)
+		metrics.TxnRequestsTotal.WithLabelValues(kind, compare, "error").Inc()
+		committed, werr := n.awaitObservedWrites(ctx, observed, aborted)
+		if werr != nil {
+			return TxnResponse{}, werr
+		}
+		if !committed {
+			return TxnResponse{}, errReevaluateTxn
+		}
+		return TxnResponse{}, ErrTxnGuard
+	}
 	if err != nil {
 		n.mu.Unlock()
 		observeTxnPreparation(lockWait, prepareDuration, kind)
@@ -630,9 +647,24 @@ func txnCompareLabel(succeeded bool) string {
 // txnToForwardRequest converts a TxnRequest into a peer ForwardRequest for
 // follower-to-leader forwarding.
 func txnToForwardRequest(req TxnRequest) *peer.ForwardRequest {
-	conds := make([]peer.TxnCondMsg, len(req.Conditions))
-	for i, c := range req.Conditions {
-		conds[i] = peer.TxnCondMsg{
+	return &peer.ForwardRequest{
+		Op: peer.ForwardTxn,
+		TxnReq: &peer.TxnReqMsg{
+			Guards:     txnCondsToMsg(req.Guards),
+			Conditions: txnCondsToMsg(req.Conditions),
+			Success:    txnOpsToMsg(req.Success),
+			Failure:    txnOpsToMsg(req.Failure),
+		},
+	}
+}
+
+func txnCondsToMsg(conds []TxnCondition) []peer.TxnCondMsg {
+	if len(conds) == 0 {
+		return nil
+	}
+	msgs := make([]peer.TxnCondMsg, len(conds))
+	for i, c := range conds {
+		msgs[i] = peer.TxnCondMsg{
 			Key:            c.Key,
 			Target:         uint8(c.Target),
 			Result:         uint8(c.Result),
@@ -643,16 +675,7 @@ func txnToForwardRequest(req TxnRequest) *peer.ForwardRequest {
 			Lease:          c.Lease,
 		}
 	}
-	success := txnOpsToMsg(req.Success)
-	failure := txnOpsToMsg(req.Failure)
-	return &peer.ForwardRequest{
-		Op: peer.ForwardTxn,
-		TxnReq: &peer.TxnReqMsg{
-			Conditions: conds,
-			Success:    success,
-			Failure:    failure,
-		},
-	}
+	return msgs
 }
 
 func txnOpsToMsg(ops []TxnOp) []peer.TxnOpMsg {
@@ -673,8 +696,20 @@ func txnOpsToMsg(ops []TxnOp) []peer.TxnOpMsg {
 
 // forwardMsgToTxnRequest converts a peer TxnReqMsg back to a TxnRequest.
 func forwardMsgToTxnRequest(m *peer.TxnReqMsg) TxnRequest {
-	conds := make([]TxnCondition, len(m.Conditions))
-	for i, c := range m.Conditions {
+	return TxnRequest{
+		Guards:     msgToTxnConds(m.Guards),
+		Conditions: msgToTxnConds(m.Conditions),
+		Success:    msgToTxnOps(m.Success),
+		Failure:    msgToTxnOps(m.Failure),
+	}
+}
+
+func msgToTxnConds(msgs []peer.TxnCondMsg) []TxnCondition {
+	if len(msgs) == 0 {
+		return nil
+	}
+	conds := make([]TxnCondition, len(msgs))
+	for i, c := range msgs {
 		conds[i] = TxnCondition{
 			Key:            c.Key,
 			Target:         TxnCondTarget(c.Target),
@@ -686,11 +721,7 @@ func forwardMsgToTxnRequest(m *peer.TxnReqMsg) TxnRequest {
 			Lease:          c.Lease,
 		}
 	}
-	return TxnRequest{
-		Conditions: conds,
-		Success:    msgToTxnOps(m.Success),
-		Failure:    msgToTxnOps(m.Failure),
-	}
+	return conds
 }
 
 func msgToTxnOps(msgs []peer.TxnOpMsg) []TxnOp {
@@ -747,41 +778,54 @@ func (n *Node) prepareTxnEntry(req TxnRequest, internal bool) (wal.Entry, bool, 
 		return n.readKey(key)
 	}
 
-	// Evaluate conditions.
-	succeeded := true
 	readCache := make(map[string]*istore.KeyValue, len(req.Conditions))
-	for _, cond := range req.Conditions {
-		if cond.Target == TxnCondMetaExists {
-			exists, token, err := n.metaExistsObservedLocked(cond.Key)
-			if token > observed.metaToken {
-				observed.metaToken = token
+	holds := func(conds []TxnCondition) (bool, error) {
+		for _, cond := range conds {
+			if cond.Target == TxnCondMetaExists {
+				exists, token, err := n.metaExistsObservedLocked(cond.Key)
+				if token > observed.metaToken {
+					observed.metaToken = token
+				}
+				if err != nil {
+					return false, err
+				}
+				var v int64
+				if exists {
+					v = 1
+				}
+				if !compareInt64(v, cond.Version, cond.Result) {
+					return false, nil
+				}
+				continue
 			}
-			if err != nil {
-				return wal.Entry{}, false, nil, txnObserved{}, txnStats{}, err
+			existing, ok := readCache[cond.Key]
+			if !ok {
+				var err error
+				existing, err = readKey(cond.Key)
+				if err != nil {
+					return false, err
+				}
+				readCache[cond.Key] = existing
 			}
-			var v int64
-			if exists {
-				v = 1
+			if !txnCondMatches(cond, existing) {
+				return false, nil
 			}
-			if !compareInt64(v, cond.Version, cond.Result) {
-				succeeded = false
-				break
-			}
-			continue
 		}
-		existing, ok := readCache[cond.Key]
-		if !ok {
-			var err error
-			existing, err = readKey(cond.Key)
-			if err != nil {
-				return wal.Entry{}, false, nil, txnObserved{}, txnStats{}, err
-			}
-			readCache[cond.Key] = existing
-		}
-		if !txnCondMatches(cond, existing) {
-			succeeded = false
-			break
-		}
+		return true, nil
+	}
+
+	guarded, err := holds(req.Guards)
+	if err != nil {
+		return wal.Entry{}, false, nil, txnObserved{}, txnStats{}, err
+	}
+	if !guarded {
+		// The observed writes go back with the error: the answer depends on
+		// them committing.
+		return wal.Entry{}, false, nil, observed, txnStats{}, ErrTxnGuard
+	}
+	succeeded, err := holds(req.Conditions)
+	if err != nil {
+		return wal.Entry{}, false, nil, txnObserved{}, txnStats{}, err
 	}
 
 	ops := req.Success
@@ -805,6 +849,10 @@ func (n *Node) prepareTxnEntry(req TxnRequest, internal bool) (wal.Entry, bool, 
 		skip           bool // delete of a non-existent key
 	}
 	resolved := make([]resolvedOp, 0, len(ops))
+	ops, err = n.expandLeaseDeletesLocked(ops, readKey)
+	if err != nil {
+		return wal.Entry{}, false, nil, txnObserved{}, txnStats{}, err
+	}
 	for _, op := range ops {
 		switch op.Type {
 		case TxnPut, TxnDelete:
@@ -958,6 +1006,46 @@ func (n *Node) prepareTxnEntry(req TxnRequest, internal bool) (wal.Entry, bool, 
 	}, succeeded, deletedKeys, observed, stats, nil
 }
 
+// expandLeaseDeletesLocked replaces each TxnDeleteLease op with deletes of
+// the keys attached to its lease: those the store's lease index lists and
+// those pending writes attach, kept only while readKey still shows them
+// attached. Must be called under n.mu.
+func (n *Node) expandLeaseDeletesLocked(ops []TxnOp, readKey func(string) (*istore.KeyValue, error)) ([]TxnOp, error) {
+	if !slices.ContainsFunc(ops, func(op TxnOp) bool { return op.Type == TxnDeleteLease }) {
+		return ops, nil
+	}
+	out := make([]TxnOp, 0, len(ops))
+	for _, op := range ops {
+		if op.Type != TxnDeleteLease {
+			out = append(out, op)
+			continue
+		}
+		if op.Lease == 0 {
+			return nil, fmt.Errorf("txn: delete lease op without a lease")
+		}
+		keys, err := n.db.Load().LeaseKeys(op.Lease)
+		if err != nil {
+			return nil, err
+		}
+		for key, p := range n.pending {
+			if !p.deleted && p.kv.Lease == op.Lease {
+				keys = append(keys, key)
+			}
+		}
+		slices.Sort(keys)
+		for _, key := range slices.Compact(keys) {
+			kv, err := readKey(key)
+			if err != nil {
+				return nil, err
+			}
+			if kv != nil && kv.Lease == op.Lease {
+				out = append(out, TxnOp{Type: TxnDelete, Key: key})
+			}
+		}
+	}
+	return out, nil
+}
+
 func opLabel(op wal.Op) string {
 	switch op {
 	case wal.OpCreate:
@@ -1078,6 +1166,11 @@ func (n *Node) evalCommittedNoop(req TxnRequest, rev int64) (noop, succeeded boo
 			return db.GetAt(key, rev)
 		}
 		return kv, nil
+	}
+	if len(req.Guards) > 0 {
+		// Guards held when evaluated with the in-flight writes; leave the
+		// txn to wait for them rather than evaluate guards again here.
+		return false, false, nil
 	}
 	succeeded = true
 	for _, cond := range req.Conditions {
@@ -1247,6 +1340,9 @@ func encodeErr(err error) (code, msg string) {
 	if errors.Is(err, ErrMetaDisabled) {
 		return "meta_disabled", ""
 	}
+	if errors.Is(err, ErrTxnGuard) {
+		return "txn_guard", ""
+	}
 	return "error", err.Error()
 }
 
@@ -1258,6 +1354,8 @@ func decodeErr(code, msg string) error {
 		return ErrKeyExists
 	case "meta_disabled":
 		return ErrMetaDisabled
+	case "txn_guard":
+		return ErrTxnGuard
 	default:
 		return errors.New(msg)
 	}

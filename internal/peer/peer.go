@@ -285,7 +285,7 @@ type TxnCondMsg struct {
 
 // TxnOpMsg is the wire representation of a TxnOp (one branch operation).
 type TxnOpMsg struct {
-	Type  uint8  `json:"type"` // 0=put, 1=delete, 2=meta put, 3=meta delete
+	Type  uint8  `json:"type"` // 0=put, 1=delete, 2=meta put, 3=meta delete, 4=delete lease keys
 	Key   string `json:"key"`
 	Value []byte `json:"value,omitempty"`
 	Lease int64  `json:"lease,omitempty"`
@@ -293,6 +293,7 @@ type TxnOpMsg struct {
 
 // TxnReqMsg is the wire representation of a TxnRequest.
 type TxnReqMsg struct {
+	Guards     []TxnCondMsg `json:"guards,omitempty"`
 	Conditions []TxnCondMsg `json:"conditions,omitempty"`
 	Success    []TxnOpMsg   `json:"success,omitempty"`
 	Failure    []TxnOpMsg   `json:"failure,omitempty"`

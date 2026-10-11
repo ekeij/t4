@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -103,24 +105,41 @@ func (s *Server) getLease(ctx context.Context, id int64, linearizable bool) (*le
 		return nil, err
 	}
 	if !found {
-		return nil, status.Error(codes.NotFound, "lease not found")
+		return nil, errLeaseNotFound
 	}
 	rec, err := decodeLease(value)
 	if err != nil {
 		return nil, err
 	}
 	if time.Now().UnixNano() >= rec.ExpiryUnixNs {
-		return nil, status.Error(codes.NotFound, "lease not found")
+		return nil, errLeaseNotFound
 	}
 	return rec, nil
 }
 
-func (s *Server) putLease(ctx context.Context, rec *leaseRecord) error {
+// refreshLease stores rec over the existing record of its lease. It returns
+// errLeaseNotFound if the lease was revoked meanwhile, rather than bring it
+// back.
+func (s *Server) refreshLease(ctx context.Context, rec *leaseRecord) error {
 	data, err := json.Marshal(rec)
 	if err != nil {
 		return status.Errorf(codes.Internal, "marshal lease: %v", err)
 	}
-	return sysstate.Put(ctx, s.node, leaseKey(rec.ID), data)
+	guards, err := s.leaseGuards(ctx, rec.ID)
+	if err != nil {
+		return err
+	}
+	if guards == nil {
+		return sysstate.Put(ctx, s.node, leaseKey(rec.ID), data)
+	}
+	_, err = s.node.Txn(ctx, t4.TxnRequest{
+		Guards:  guards,
+		Success: []t4.TxnOp{{Type: t4.TxnMetaPut, Key: leaseKey(rec.ID), Value: data}},
+	})
+	if errors.Is(err, t4.ErrTxnGuard) {
+		return errLeaseNotFound
+	}
+	return err
 }
 
 func (s *Server) listLeases(ctx context.Context, linearizable bool) ([]*leaseRecord, error) {
@@ -188,26 +207,69 @@ func (s *Server) collectLeaseKeys(ctx context.Context, leaseID int64, linearizab
 	return out, nil
 }
 
-// revokeLease deletes every key attached to leaseID and the lease record
-// itself in a single atomic transaction. Crash-safety: either every delete
-// commits to the WAL together or none of them do, so a leader crash during
-// revoke can never leave a "half-revoked" lease (record present but attached
-// keys missing, or vice versa).
-//
-// Note: there is still a small race between collectLeaseKeys and the Txn
-// where a concurrent Put attaching a new key to leaseID could land. Etcd has
-// the same race; v1 accepts it.
-func (s *Server) revokeLease(ctx context.Context, leaseID int64) error {
-	keys, err := s.collectLeaseKeys(ctx, leaseID, true)
+// revokeLease deletes the lease record and every key attached to it in one
+// revision, and returns that revision.
+func (s *Server) revokeLease(ctx context.Context, leaseID int64) (int64, error) {
+	on, err := s.node.MetaEnabledSync(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	ops := make([]t4.TxnOp, 0, len(keys))
-	for _, key := range keys {
-		ops = append(ops, t4.TxnOp{Type: t4.TxnDelete, Key: key})
+	if on {
+		// As etcd revokes: the leader finds the attached keys when the
+		// revoke commits, so a key attached or detached by a concurrent
+		// write is deleted, or kept, accordingly.
+		resp, err := s.node.Txn(ctx, t4.TxnRequest{Success: []t4.TxnOp{
+			{Type: t4.TxnDeleteLease, Lease: leaseID},
+			{Type: t4.TxnMetaDelete, Key: leaseKey(leaseID)},
+		}})
+		return resp.Revision, err
 	}
-	return sysstate.Apply(ctx, s.node, ops, sysstate.Change{Key: leaseKey(leaseID), Delete: true})
+	// A legacy database may still be led by a v1.1 node during a rolling
+	// upgrade, which ignores TxnDeleteLease. Delete the keys found attached
+	// only while each still is, so a key a concurrent write detached
+	// survives; a key attached after they were found is not deleted.
+	for {
+		keys, err := s.collectLeaseKeys(ctx, leaseID, true)
+		if err != nil {
+			return 0, err
+		}
+		conds := make([]t4.TxnCondition, 0, len(keys))
+		ops := make([]t4.TxnOp, 0, len(keys)+1)
+		for _, key := range keys {
+			conds = append(conds, t4.TxnCondition{Key: key, Target: t4.TxnCondLease, Result: t4.TxnCondEqual, Lease: leaseID})
+			ops = append(ops, t4.TxnOp{Type: t4.TxnDelete, Key: key})
+		}
+		ops = append(ops, t4.TxnOp{Type: t4.TxnDelete, Key: leaseKey(leaseID)})
+		resp, err := s.node.Txn(ctx, t4.TxnRequest{Conditions: conds, Success: ops})
+		if err != nil {
+			return 0, err
+		}
+		if resp.Succeeded {
+			return resp.Revision, nil
+		}
+	}
 }
+
+// leaseGuards returns guards that hold while the given leases exist, so a
+// write attaching keys to them cannot commit after they are revoked. A
+// legacy database gets none: a v1.1 leader would ignore them.
+func (s *Server) leaseGuards(ctx context.Context, leases ...int64) ([]t4.TxnCondition, error) {
+	on, err := s.node.MetaEnabledSync(ctx)
+	if err != nil || !on {
+		return nil, err
+	}
+	var guards []t4.TxnCondition
+	for _, id := range leases {
+		if id == 0 || slices.ContainsFunc(guards, func(g t4.TxnCondition) bool { return g.Key == leaseKey(id) }) {
+			continue
+		}
+		guards = append(guards, t4.TxnCondition{Key: leaseKey(id), Target: t4.TxnCondMetaExists, Result: t4.TxnCondEqual, Version: 1})
+	}
+	return guards, nil
+}
+
+// errLeaseNotFound is returned for a lease that does not exist.
+var errLeaseNotFound = status.Error(codes.NotFound, "lease not found")
 
 func (s *Server) maybeStartLeaseLoop() {
 	s.leaseLoopOnce.Do(func() {
@@ -234,7 +296,7 @@ func (s *Server) leaseLoop() {
 		now := time.Now()
 		for _, rec := range leases {
 			if ttlRemaining(rec, now) == 0 {
-				_ = s.revokeLease(ctx, rec.ID)
+				_, _ = s.revokeLease(ctx, rec.ID)
 			}
 		}
 		cancel()

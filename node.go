@@ -40,6 +40,10 @@ var (
 	// ErrMetaDisabled is returned by meta keyspace writes before the cluster
 	// has been upgraded to a WAL format that supports them.
 	ErrMetaDisabled = errors.New("t4: meta keyspace is not enabled for this database")
+
+	// ErrTxnGuard is returned by Node.Txn when one of the request's Guards
+	// does not hold. Nothing was written.
+	ErrTxnGuard = errors.New("t4: txn guard does not hold")
 )
 
 // TxnCondTarget identifies which field of a key's metadata is compared.
@@ -89,6 +93,11 @@ const (
 	TxnDelete                      // unconditional delete
 	TxnMetaPut                     // set a meta keyspace key (see Node.MetaPut)
 	TxnMetaDelete                  // delete a meta keyspace key (see Node.MetaDelete)
+	// TxnDeleteLease deletes every key attached to Lease when the txn
+	// commits, as etcd's lease revoke does. Key is unused. The keys are found
+	// under the write lock, so a key attached by a concurrent write is
+	// deleted with the others, and one a concurrent write detached is not.
+	TxnDeleteLease
 )
 
 // TxnOp is one write operation in a transaction's Then or Else branch.
@@ -103,6 +112,10 @@ type TxnOp struct {
 // If all Conditions are met the Success ops are applied atomically; otherwise
 // the Failure ops are applied atomically (may be empty for a read-only else).
 type TxnRequest struct {
+	// Guards must all hold for the txn to run at all. If one does not, it
+	// writes nothing and Node.Txn returns ErrTxnGuard. They are evaluated in
+	// the same atomic step as Conditions.
+	Guards     []TxnCondition
 	Conditions []TxnCondition
 	Success    []TxnOp
 	Failure    []TxnOp
