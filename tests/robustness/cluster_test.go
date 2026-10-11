@@ -209,6 +209,7 @@ func (n *node) start(bin string) error {
 	cmd := exec.Command(bin, n.args...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
+	cmd.SysProcAttr = dieWithParent()
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
 		return fmt.Errorf("start %s: %w", n.name, err)
