@@ -13,6 +13,9 @@ jobs:
   jepsen:
     uses: ./.github/workflows/jepsen-workflow.yml
     # PR / branch pushes run a small smoke matrix so iteration on jepsen/**
-    # stays fast. The full nemesis matrix runs nightly (see nightly.yml).
+    # stays fast. The full nemesis and workload matrix runs nightly (see
+    # nightly.yml). Of the Elle workloads only append runs here: it covers
+    # multi-key Txn serializability, the broadest single check.
     with:
       nemeses: '["partition-halves"]'
+      workloads: '["register", "multi-register", "append"]'

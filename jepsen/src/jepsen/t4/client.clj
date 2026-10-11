@@ -29,7 +29,7 @@
 ; Keep this short: timed-out ops become :info entries that Knossos WGL must
 ; place at every possible position in the history — exponential in concurrency.
 ; 2 s is plenty for in-container gRPC; reduces max concurrent :info window.
-(def ^:private timeout-ms 2000)
+(def timeout-ms 2000)
 
 (defn connect!
   "Opens a jetcd Client pointing at a single t4 node."

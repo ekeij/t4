@@ -2,6 +2,7 @@
 
 NODES      := n1,n2,n3,n4,n5
 TIME_LIMIT := 120
+# register | multi-register | append | wr | watch | set
 WORKLOAD   := register
 # 'kill' tests crash-recovery correctness (WAL + S3 checkpoint replay).
 # 'partition-halves' and 'partition-s3' test leader election under network
