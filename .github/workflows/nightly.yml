@@ -2,7 +2,7 @@ name: Nightly stress test
 
 on:
   schedule:
-    - cron: "0 2 * * *" # 02:00 UTC every night
+    - cron: "0 22 * * *" # 22:00 UTC every night
   workflow_dispatch: # allow manual trigger
   workflow_call: # the release workflow runs these before building (see image-release.yml)
 
@@ -79,5 +79,25 @@ jobs:
         with:
           name: robustness-reports-${{ github.sha }}
           path: .tmp/robustness/results/
+          retention-days: 30
+          if-no-files-found: ignore
+
+  conformance:
+    name: Kubernetes conformance (k0s on T4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 270
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run Kubernetes conformance with Sonobuoy
+        run: make test-conformance
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: conformance-results-${{ github.sha }}
+          path: .tmp/conformance/
           retention-days: 30
           if-no-files-found: ignore
