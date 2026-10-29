@@ -209,6 +209,55 @@ jobs:
         if: failure()
         run: docker logs t4-s3-smoke || true
 
+  gcs-emulator:
+    name: GCS (fake-gcs-server)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      # The memory backend checks generation preconditions and creates the
+      # object under one lock; TestGCSBackendEnforcesGenerationPreconditions
+      # proves the emulator enforces them before the other tests rely on it.
+      - name: Start fake-gcs-server
+        run: |
+          docker run -d --name t4-gcs \
+            -p 4443:4443 \
+            fsouza/fake-gcs-server:1.56.1 \
+            -backend memory -scheme http -port 4443 \
+            -public-host 127.0.0.1:4443 -external-url http://127.0.0.1:4443
+
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:4443/storage/v1/b >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          docker logs t4-gcs
+          exit 1
+
+      - name: Test the GCS store, clusters and the CLI
+        run: |
+          go test -count=1 -timeout 600s -run 'GCS' ./pkg/object
+          go test -count=1 -timeout 600s -run '^TestGCS' .
+          go test -count=1 -timeout 600s -run '^TestGCS' ./tests/e2e
+        env:
+          STORAGE_EMULATOR_HOST: 127.0.0.1:4443
+
+      - name: Dump emulator logs
+        if: failure()
+        run: docker logs t4-gcs || true
+
   upgrade-matrix:
     name: Upgrade Matrix
     runs-on: ubuntu-latest

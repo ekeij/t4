@@ -13,7 +13,10 @@ import (
 // outage lasts. The leader must step down instead, so that a follower takes
 // over.
 func TestLeaderStepsDownWithoutObjectStorage(t *testing.T) {
-	cluster := newFailoverCluster(t, 2)
+	testLeaderStepsDownWithoutObjectStorage(t, newFailoverCluster(t, 2))
+}
+
+func testLeaderStepsDownWithoutObjectStorage(t *testing.T, cluster *failoverCluster) {
 	leader := cluster.leader(t, 10*time.Second)
 	follower := cluster.survivors(leader)[0]
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)

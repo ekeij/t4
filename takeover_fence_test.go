@@ -17,7 +17,10 @@ import (
 // holds, so it must not take over. Once F2 reaches object storage again, it
 // takes over with every write (docs/design/takeover-fence.md).
 func TestTakeoverWaitsForNodeWithAcknowledgedWrites(t *testing.T) {
-	shared := object.NewMem()
+	testTakeoverWaitsForNodeWithAcknowledgedWrites(t, object.NewMem())
+}
+
+func testTakeoverWaitsForNodeWithAcknowledgedWrites(t *testing.T, shared object.ConditionalStore) {
 	type member struct {
 		cfg   Config
 		node  *Node

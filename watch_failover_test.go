@@ -105,7 +105,13 @@ type failoverCluster struct {
 
 func newFailoverCluster(t *testing.T, size int) *failoverCluster {
 	t.Helper()
-	shared := object.NewMem()
+	return newFailoverClusterOn(t, size, object.NewMem(), nil)
+}
+
+// newFailoverClusterOn is newFailoverCluster over the object store shared,
+// with each node's Config passed through tweak (if not nil) before it opens.
+func newFailoverClusterOn(t *testing.T, size int, shared object.ConditionalStore, tweak func(*Config)) *failoverCluster {
+	t.Helper()
 	c := &failoverCluster{
 		shared:  shared,
 		nodes:   make([]*Node, size),
@@ -116,7 +122,7 @@ func newFailoverCluster(t *testing.T, size int) *failoverCluster {
 		listenAddr := freeAddrLocal(t)
 		proxy := newBlockableProxyLocal(t, listenAddr)
 		gs := newGatedStore(shared)
-		n, err := Open(Config{
+		cfg := Config{
 			DataDir:            t.TempDir(),
 			ObjectStore:        gs,
 			NodeID:             fmt.Sprintf("failover-node-%d", i),
@@ -126,7 +132,11 @@ func newFailoverCluster(t *testing.T, size int) *failoverCluster {
 			PeerBufferSize:     1000,
 			CheckpointInterval: 300 * time.Millisecond,
 			SegmentMaxAge:      200 * time.Millisecond,
-		})
+		}
+		if tweak != nil {
+			tweak(&cfg)
+		}
+		n, err := Open(cfg)
 		if err != nil {
 			t.Fatalf("open node-%d: %v", i, err)
 		}
