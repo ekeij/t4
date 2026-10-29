@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -11,8 +12,8 @@ import (
 
 func statusCmd() *cobra.Command {
 	var (
-		s3  *s3Flags
-		enc *objectStoreEncryptionFlags
+		objFlags *objectStoreFlags
+		enc      *objectStoreEncryptionFlags
 	)
 	cmd := &cobra.Command{
 		Use:   "status",
@@ -22,7 +23,7 @@ total checkpoint and WAL segment counts, and any registered branch forks.
 
 This command does not require a running node — it reads directly from S3.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, err := newObjectStoreForCommand(cmd.Context(), s3, enc)
+			store, err := newObjectStoreForCommand(cmd.Context(), objFlags, enc)
 			if err != nil {
 				return err
 			}
@@ -50,7 +51,7 @@ This command does not require a running node — it reads directly from S3.`,
 				return fmt.Errorf("read branch entries: %w", err)
 			}
 
-			fmt.Printf("S3 status  s3://%s/%s\n\n", s3.Bucket, s3.Prefix)
+			fmt.Printf("%s status  %s\n\n", strings.ToUpper(objFlags.kind()), objFlags.url())
 
 			fmt.Printf("Latest checkpoint\n")
 			if manifest == nil {
@@ -77,7 +78,7 @@ This command does not require a running node — it reads directly from S3.`,
 			return nil
 		},
 	}
-	s3 = addS3Flags(cmd, true)
+	objFlags = addObjectStoreFlags(cmd, true)
 	enc = addObjectStoreEncryptionFlags(cmd)
 	return cmd
 }

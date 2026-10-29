@@ -169,6 +169,9 @@ metadata.
 | Command | Environment variable | Equivalent flag |
 |---------|----------------------|-----------------|
 | `t4 branch fork` | `T4_BRANCH_ID` | `--branch-id` |
+| `t4 branch fork` | `T4_GCS_BUCKET` | `--gcs-bucket` |
+| `t4 branch fork` | `T4_GCS_CREDENTIALS_FILE` | `--gcs-credentials-file` |
+| `t4 branch fork` | `T4_GCS_PREFIX` | `--gcs-prefix` |
 | `t4 branch fork` | `T4_OBJECT_STORE_ENCRYPTION_KEY_ENV` | `--object-store-encryption-key-env` |
 | `t4 branch fork` | `T4_OBJECT_STORE_ENCRYPTION_KEY_FILE` | `--object-store-encryption-key-file` |
 | `t4 branch fork` | `T4_S3_ACCESS_KEY_ID` | `--s3-access-key-id` |
@@ -181,6 +184,9 @@ metadata.
 | `t4 branch fork` | `T4_S3_SECRET_ACCESS_KEY` | `--s3-secret-access-key` |
 | `t4 branch fork` | `T4_S3_SESSION_TOKEN` | `--s3-session-token` |
 | `t4 branch unfork` | `T4_BRANCH_ID` | `--branch-id` |
+| `t4 branch unfork` | `T4_GCS_BUCKET` | `--gcs-bucket` |
+| `t4 branch unfork` | `T4_GCS_CREDENTIALS_FILE` | `--gcs-credentials-file` |
+| `t4 branch unfork` | `T4_GCS_PREFIX` | `--gcs-prefix` |
 | `t4 branch unfork` | `T4_OBJECT_STORE_ENCRYPTION_KEY_ENV` | `--object-store-encryption-key-env` |
 | `t4 branch unfork` | `T4_OBJECT_STORE_ENCRYPTION_KEY_FILE` | `--object-store-encryption-key-file` |
 | `t4 branch unfork` | `T4_S3_ACCESS_KEY_ID` | `--s3-access-key-id` |
@@ -192,6 +198,9 @@ metadata.
 | `t4 branch unfork` | `T4_S3_REGION` | `--s3-region` |
 | `t4 branch unfork` | `T4_S3_SECRET_ACCESS_KEY` | `--s3-secret-access-key` |
 | `t4 branch unfork` | `T4_S3_SESSION_TOKEN` | `--s3-session-token` |
+| `t4 gc` | `T4_GCS_BUCKET` | `--gcs-bucket` |
+| `t4 gc` | `T4_GCS_CREDENTIALS_FILE` | `--gcs-credentials-file` |
+| `t4 gc` | `T4_GCS_PREFIX` | `--gcs-prefix` |
 | `t4 gc` | `T4_OBJECT_STORE_ENCRYPTION_KEY_ENV` | `--object-store-encryption-key-env` |
 | `t4 gc` | `T4_OBJECT_STORE_ENCRYPTION_KEY_FILE` | `--object-store-encryption-key-file` |
 | `t4 gc` | `T4_S3_ACCESS_KEY_ID` | `--s3-access-key-id` |
@@ -210,6 +219,9 @@ metadata.
 | `t4 inspect list` | `T4_DATA_DIR` | `--data-dir` |
 | `t4 inspect meta` | `T4_DATA_DIR` | `--data-dir` |
 | `t4 restore checkpoint` | `T4_DATA_DIR` | `--data-dir` |
+| `t4 restore checkpoint` | `T4_GCS_BUCKET` | `--gcs-bucket` |
+| `t4 restore checkpoint` | `T4_GCS_CREDENTIALS_FILE` | `--gcs-credentials-file` |
+| `t4 restore checkpoint` | `T4_GCS_PREFIX` | `--gcs-prefix` |
 | `t4 restore checkpoint` | `T4_OBJECT_STORE_ENCRYPTION_KEY_ENV` | `--object-store-encryption-key-env` |
 | `t4 restore checkpoint` | `T4_OBJECT_STORE_ENCRYPTION_KEY_FILE` | `--object-store-encryption-key-file` |
 | `t4 restore checkpoint` | `T4_S3_ACCESS_KEY_ID` | `--s3-access-key-id` |
@@ -221,6 +233,9 @@ metadata.
 | `t4 restore checkpoint` | `T4_S3_REGION` | `--s3-region` |
 | `t4 restore checkpoint` | `T4_S3_SECRET_ACCESS_KEY` | `--s3-secret-access-key` |
 | `t4 restore checkpoint` | `T4_S3_SESSION_TOKEN` | `--s3-session-token` |
+| `t4 restore list` | `T4_GCS_BUCKET` | `--gcs-bucket` |
+| `t4 restore list` | `T4_GCS_CREDENTIALS_FILE` | `--gcs-credentials-file` |
+| `t4 restore list` | `T4_GCS_PREFIX` | `--gcs-prefix` |
 | `t4 restore list` | `T4_OBJECT_STORE_ENCRYPTION_KEY_ENV` | `--object-store-encryption-key-env` |
 | `t4 restore list` | `T4_OBJECT_STORE_ENCRYPTION_KEY_FILE` | `--object-store-encryption-key-file` |
 | `t4 restore list` | `T4_S3_ACCESS_KEY_ID` | `--s3-access-key-id` |
@@ -249,6 +264,9 @@ metadata.
 | `t4 run` | `T4_DATA_DIR` | `--data-dir` |
 | `t4 run` | `T4_FOLLOWER_MAX_RETRIES` | `--follower-max-retries` |
 | `t4 run` | `T4_FOLLOWER_WAIT_MODE` | `--follower-wait-mode` |
+| `t4 run` | `T4_GCS_BUCKET` | `--gcs-bucket` |
+| `t4 run` | `T4_GCS_CREDENTIALS_FILE` | `--gcs-credentials-file` |
+| `t4 run` | `T4_GCS_PREFIX` | `--gcs-prefix` |
 | `t4 run` | `T4_GRPC_KEEPALIVE_INTERVAL` | `--grpc-keepalive-interval` |
 | `t4 run` | `T4_GRPC_KEEPALIVE_MIN_TIME` | `--grpc-keepalive-min-time` |
 | `t4 run` | `T4_GRPC_KEEPALIVE_PERMIT_WITHOUT_STREAM` | `--grpc-keepalive-permit-without-stream` |
@@ -283,6 +301,9 @@ metadata.
 | `t4 run` | `T4_TOKEN_TTL` | `--token-ttl` |
 | `t4 run` | `T4_WAL_SYNC_UPLOAD` | `--wal-sync-upload` |
 | `t4 run` | `T4_WATCH_SEND_TIMEOUT` | `--watch-send-timeout` |
+| `t4 status` | `T4_GCS_BUCKET` | `--gcs-bucket` |
+| `t4 status` | `T4_GCS_CREDENTIALS_FILE` | `--gcs-credentials-file` |
+| `t4 status` | `T4_GCS_PREFIX` | `--gcs-prefix` |
 | `t4 status` | `T4_OBJECT_STORE_ENCRYPTION_KEY_ENV` | `--object-store-encryption-key-env` |
 | `t4 status` | `T4_OBJECT_STORE_ENCRYPTION_KEY_FILE` | `--object-store-encryption-key-file` |
 | `t4 status` | `T4_S3_ACCESS_KEY_ID` | `--s3-access-key-id` |
@@ -305,10 +326,13 @@ Generated from the CLI flag definitions in Go. Run `go run ./hack/docgen` after 
 |---------|------|---------|-----|----------|------|
 | `t4 branch fork` | `--branch-id` | — | `T4_BRANCH_ID` | Yes | unique identifier for this branch (required) |
 | `t4 branch fork` | `--checkpoint` | — | — | No | fork from this specific checkpoint key instead of the latest revision |
+| `t4 branch fork` | `--gcs-bucket` | — | `T4_GCS_BUCKET` | No | Google Cloud Storage bucket, used through the native GCS API; this or --s3-bucket is required |
+| `t4 branch fork` | `--gcs-credentials-file` | — | `T4_GCS_CREDENTIALS_FILE` | No | Google credentials JSON file (service_account, authorized_user, external_account or impersonated_service_account) to use instead of Application Default Credentials, which cover GKE Workload Identity |
+| `t4 branch fork` | `--gcs-prefix` | — | `T4_GCS_PREFIX` | No | key prefix inside the GCS bucket |
 | `t4 branch fork` | `--object-store-encryption-key-env` | — | `T4_OBJECT_STORE_ENCRYPTION_KEY_ENV` | No | environment variable holding a 32-byte AES-256 object-store encryption key as raw bytes, hex, or base64 |
 | `t4 branch fork` | `--object-store-encryption-key-file` | — | `T4_OBJECT_STORE_ENCRYPTION_KEY_FILE` | No | file containing a 32-byte AES-256 object-store encryption key as raw bytes, hex, or base64 |
 | `t4 branch fork` | `--s3-access-key-id` | — | `T4_S3_ACCESS_KEY_ID` | No | t4 S3 access key ID; when set with --s3-secret-access-key, uses static credentials |
-| `t4 branch fork` | `--s3-bucket` | — | `T4_S3_BUCKET` | Yes | S3 bucket |
+| `t4 branch fork` | `--s3-bucket` | — | `T4_S3_BUCKET` | No | S3 bucket; this or --gcs-bucket is required |
 | `t4 branch fork` | `--s3-ca-bundle` | — | `T4_S3_CA_BUNDLE` | No | PEM CA bundle file to trust for HTTPS to the S3 endpoint; use this for S3-compatible stores running behind a self-signed CA |
 | `t4 branch fork` | `--s3-endpoint` | — | `T4_S3_ENDPOINT` | No | custom S3 endpoint URL, e.g. for S3-compatible stores |
 | `t4 branch fork` | `--s3-prefix` | — | `T4_S3_PREFIX` | No | key prefix inside the S3 bucket |
@@ -317,10 +341,13 @@ Generated from the CLI flag definitions in Go. Run `go run ./hack/docgen` after 
 | `t4 branch fork` | `--s3-secret-access-key` | — | `T4_S3_SECRET_ACCESS_KEY` | No | AWS secret access key |
 | `t4 branch fork` | `--s3-session-token` | — | `T4_S3_SESSION_TOKEN` | No | session token for temporary STS credentials; honored with --s3-access-key-id/--s3-secret-access-key |
 | `t4 branch unfork` | `--branch-id` | — | `T4_BRANCH_ID` | Yes | unique identifier for this branch (required) |
+| `t4 branch unfork` | `--gcs-bucket` | — | `T4_GCS_BUCKET` | No | Google Cloud Storage bucket, used through the native GCS API; this or --s3-bucket is required |
+| `t4 branch unfork` | `--gcs-credentials-file` | — | `T4_GCS_CREDENTIALS_FILE` | No | Google credentials JSON file (service_account, authorized_user, external_account or impersonated_service_account) to use instead of Application Default Credentials, which cover GKE Workload Identity |
+| `t4 branch unfork` | `--gcs-prefix` | — | `T4_GCS_PREFIX` | No | key prefix inside the GCS bucket |
 | `t4 branch unfork` | `--object-store-encryption-key-env` | — | `T4_OBJECT_STORE_ENCRYPTION_KEY_ENV` | No | environment variable holding a 32-byte AES-256 object-store encryption key as raw bytes, hex, or base64 |
 | `t4 branch unfork` | `--object-store-encryption-key-file` | — | `T4_OBJECT_STORE_ENCRYPTION_KEY_FILE` | No | file containing a 32-byte AES-256 object-store encryption key as raw bytes, hex, or base64 |
 | `t4 branch unfork` | `--s3-access-key-id` | — | `T4_S3_ACCESS_KEY_ID` | No | t4 S3 access key ID; when set with --s3-secret-access-key, uses static credentials |
-| `t4 branch unfork` | `--s3-bucket` | — | `T4_S3_BUCKET` | Yes | S3 bucket |
+| `t4 branch unfork` | `--s3-bucket` | — | `T4_S3_BUCKET` | No | S3 bucket; this or --gcs-bucket is required |
 | `t4 branch unfork` | `--s3-ca-bundle` | — | `T4_S3_CA_BUNDLE` | No | PEM CA bundle file to trust for HTTPS to the S3 endpoint; use this for S3-compatible stores running behind a self-signed CA |
 | `t4 branch unfork` | `--s3-endpoint` | — | `T4_S3_ENDPOINT` | No | custom S3 endpoint URL, e.g. for S3-compatible stores |
 | `t4 branch unfork` | `--s3-prefix` | — | `T4_S3_PREFIX` | No | key prefix inside the S3 bucket |
@@ -328,11 +355,14 @@ Generated from the CLI flag definitions in Go. Run `go run ./hack/docgen` after 
 | `t4 branch unfork` | `--s3-region` | — | `T4_S3_REGION` | No | AWS region |
 | `t4 branch unfork` | `--s3-secret-access-key` | — | `T4_S3_SECRET_ACCESS_KEY` | No | AWS secret access key |
 | `t4 branch unfork` | `--s3-session-token` | — | `T4_S3_SESSION_TOKEN` | No | session token for temporary STS credentials; honored with --s3-access-key-id/--s3-secret-access-key |
+| `t4 gc` | `--gcs-bucket` | — | `T4_GCS_BUCKET` | No | Google Cloud Storage bucket, used through the native GCS API; this or --s3-bucket is required |
+| `t4 gc` | `--gcs-credentials-file` | — | `T4_GCS_CREDENTIALS_FILE` | No | Google credentials JSON file (service_account, authorized_user, external_account or impersonated_service_account) to use instead of Application Default Credentials, which cover GKE Workload Identity |
+| `t4 gc` | `--gcs-prefix` | — | `T4_GCS_PREFIX` | No | key prefix inside the GCS bucket |
 | `t4 gc` | `--keep` | `3` | — | No | number of most-recent checkpoints to retain |
 | `t4 gc` | `--object-store-encryption-key-env` | — | `T4_OBJECT_STORE_ENCRYPTION_KEY_ENV` | No | environment variable holding a 32-byte AES-256 object-store encryption key as raw bytes, hex, or base64 |
 | `t4 gc` | `--object-store-encryption-key-file` | — | `T4_OBJECT_STORE_ENCRYPTION_KEY_FILE` | No | file containing a 32-byte AES-256 object-store encryption key as raw bytes, hex, or base64 |
 | `t4 gc` | `--s3-access-key-id` | — | `T4_S3_ACCESS_KEY_ID` | No | t4 S3 access key ID; when set with --s3-secret-access-key, uses static credentials |
-| `t4 gc` | `--s3-bucket` | — | `T4_S3_BUCKET` | Yes | S3 bucket |
+| `t4 gc` | `--s3-bucket` | — | `T4_S3_BUCKET` | No | S3 bucket; this or --gcs-bucket is required |
 | `t4 gc` | `--s3-ca-bundle` | — | `T4_S3_CA_BUNDLE` | No | PEM CA bundle file to trust for HTTPS to the S3 endpoint; use this for S3-compatible stores running behind a self-signed CA |
 | `t4 gc` | `--s3-endpoint` | — | `T4_S3_ENDPOINT` | No | custom S3 endpoint URL, e.g. for S3-compatible stores |
 | `t4 gc` | `--s3-prefix` | — | `T4_S3_PREFIX` | No | key prefix inside the S3 bucket |
@@ -361,10 +391,13 @@ Generated from the CLI flag definitions in Go. Run `go run ./hack/docgen` after 
 | `t4 inspect meta` | `--json` | `false` | — | No | emit JSON output |
 | `t4 restore checkpoint` | `--checkpoint` | — | — | No | checkpoint key to restore (default: latest; use 't4 restore list' to find keys) |
 | `t4 restore checkpoint` | `--data-dir` | — | `T4_DATA_DIR` | Yes | local directory to restore into (required; must not already contain a Pebble database) |
+| `t4 restore checkpoint` | `--gcs-bucket` | — | `T4_GCS_BUCKET` | No | Google Cloud Storage bucket, used through the native GCS API; this or --s3-bucket is required |
+| `t4 restore checkpoint` | `--gcs-credentials-file` | — | `T4_GCS_CREDENTIALS_FILE` | No | Google credentials JSON file (service_account, authorized_user, external_account or impersonated_service_account) to use instead of Application Default Credentials, which cover GKE Workload Identity |
+| `t4 restore checkpoint` | `--gcs-prefix` | — | `T4_GCS_PREFIX` | No | key prefix inside the GCS bucket |
 | `t4 restore checkpoint` | `--object-store-encryption-key-env` | — | `T4_OBJECT_STORE_ENCRYPTION_KEY_ENV` | No | environment variable holding a 32-byte AES-256 object-store encryption key as raw bytes, hex, or base64 |
 | `t4 restore checkpoint` | `--object-store-encryption-key-file` | — | `T4_OBJECT_STORE_ENCRYPTION_KEY_FILE` | No | file containing a 32-byte AES-256 object-store encryption key as raw bytes, hex, or base64 |
 | `t4 restore checkpoint` | `--s3-access-key-id` | — | `T4_S3_ACCESS_KEY_ID` | No | t4 S3 access key ID; when set with --s3-secret-access-key, uses static credentials |
-| `t4 restore checkpoint` | `--s3-bucket` | — | `T4_S3_BUCKET` | Yes | S3 bucket |
+| `t4 restore checkpoint` | `--s3-bucket` | — | `T4_S3_BUCKET` | No | S3 bucket; this or --gcs-bucket is required |
 | `t4 restore checkpoint` | `--s3-ca-bundle` | — | `T4_S3_CA_BUNDLE` | No | PEM CA bundle file to trust for HTTPS to the S3 endpoint; use this for S3-compatible stores running behind a self-signed CA |
 | `t4 restore checkpoint` | `--s3-endpoint` | — | `T4_S3_ENDPOINT` | No | custom S3 endpoint URL, e.g. for S3-compatible stores |
 | `t4 restore checkpoint` | `--s3-prefix` | — | `T4_S3_PREFIX` | No | key prefix inside the S3 bucket |
@@ -372,10 +405,13 @@ Generated from the CLI flag definitions in Go. Run `go run ./hack/docgen` after 
 | `t4 restore checkpoint` | `--s3-region` | — | `T4_S3_REGION` | No | AWS region |
 | `t4 restore checkpoint` | `--s3-secret-access-key` | — | `T4_S3_SECRET_ACCESS_KEY` | No | AWS secret access key |
 | `t4 restore checkpoint` | `--s3-session-token` | — | `T4_S3_SESSION_TOKEN` | No | session token for temporary STS credentials; honored with --s3-access-key-id/--s3-secret-access-key |
+| `t4 restore list` | `--gcs-bucket` | — | `T4_GCS_BUCKET` | No | Google Cloud Storage bucket, used through the native GCS API; this or --s3-bucket is required |
+| `t4 restore list` | `--gcs-credentials-file` | — | `T4_GCS_CREDENTIALS_FILE` | No | Google credentials JSON file (service_account, authorized_user, external_account or impersonated_service_account) to use instead of Application Default Credentials, which cover GKE Workload Identity |
+| `t4 restore list` | `--gcs-prefix` | — | `T4_GCS_PREFIX` | No | key prefix inside the GCS bucket |
 | `t4 restore list` | `--object-store-encryption-key-env` | — | `T4_OBJECT_STORE_ENCRYPTION_KEY_ENV` | No | environment variable holding a 32-byte AES-256 object-store encryption key as raw bytes, hex, or base64 |
 | `t4 restore list` | `--object-store-encryption-key-file` | — | `T4_OBJECT_STORE_ENCRYPTION_KEY_FILE` | No | file containing a 32-byte AES-256 object-store encryption key as raw bytes, hex, or base64 |
 | `t4 restore list` | `--s3-access-key-id` | — | `T4_S3_ACCESS_KEY_ID` | No | t4 S3 access key ID; when set with --s3-secret-access-key, uses static credentials |
-| `t4 restore list` | `--s3-bucket` | — | `T4_S3_BUCKET` | Yes | S3 bucket |
+| `t4 restore list` | `--s3-bucket` | — | `T4_S3_BUCKET` | No | S3 bucket; this or --gcs-bucket is required |
 | `t4 restore list` | `--s3-ca-bundle` | — | `T4_S3_CA_BUNDLE` | No | PEM CA bundle file to trust for HTTPS to the S3 endpoint; use this for S3-compatible stores running behind a self-signed CA |
 | `t4 restore list` | `--s3-endpoint` | — | `T4_S3_ENDPOINT` | No | custom S3 endpoint URL, e.g. for S3-compatible stores |
 | `t4 restore list` | `--s3-prefix` | — | `T4_S3_PREFIX` | No | key prefix inside the S3 bucket |
@@ -391,7 +427,7 @@ Generated from the CLI flag definitions in Go. Run `go run ./hack/docgen` after 
 | `t4 run` | `--auto-compact-retention` | `0s` | `T4_AUTO_COMPACT_RETENTION` | No | time strategy: retain revision history for this duration and compact older changes |
 | `t4 run` | `--auto-compact-sample-interval` | `0s` | `T4_AUTO_COMPACT_SAMPLE_INTERVAL` | No | time strategy: revision/time sampling interval; 0 defaults to clamp(retention/7, 1m, 24h) when enabled |
 | `t4 run` | `--branch-checkpoint` | — | `T4_BRANCH_CHECKPOINT` | No | checkpoint index key returned by 't4 branch fork' (required with --branch-prefix) |
-| `t4 run` | `--branch-prefix` | — | `T4_BRANCH_PREFIX` | No | S3 key prefix of the source node to branch from (uses --s3-bucket) |
+| `t4 run` | `--branch-prefix` | — | `T4_BRANCH_PREFIX` | No | key prefix of the source node to branch from, in the --s3-bucket or --gcs-bucket bucket |
 | `t4 run` | `--checkpoint-entries` | `0` | `T4_CHECKPOINT_ENTRIES` | No | triggers a checkpoint after this many WAL entries regardless of time. 0 means disabled (requires --s3-bucket) |
 | `t4 run` | `--checkpoint-interval-min` | `15` | `T4_CHECKPOINT_INTERVAL_MIN` | No | checkpoint interval in minutes (requires --s3-bucket) |
 | `t4 run` | `--client-tls-ca` | — | `T4_CLIENT_TLS_CA` | No | CA certificate for client mTLS (PEM); omit for server-only TLS |
@@ -400,6 +436,9 @@ Generated from the CLI flag definitions in Go. Run `go run ./hack/docgen` after 
 | `t4 run` | `--data-dir` | `/var/lib/t4` | `T4_DATA_DIR` | No | directory for Pebble data and local WAL segments |
 | `t4 run` | `--follower-max-retries` | `5` | `T4_FOLLOWER_MAX_RETRIES` | No | consecutive stream failures before a follower attempts a leader takeover |
 | `t4 run` | `--follower-wait-mode` | `quorum` | `T4_FOLLOWER_WAIT_MODE` | No | leader wait policy for follower ACKs before commit: none, quorum, or all |
+| `t4 run` | `--gcs-bucket` | — | `T4_GCS_BUCKET` | No | Google Cloud Storage bucket, used through the native GCS API; mutually exclusive with --s3-bucket |
+| `t4 run` | `--gcs-credentials-file` | — | `T4_GCS_CREDENTIALS_FILE` | No | Google credentials JSON file (service_account, authorized_user, external_account or impersonated_service_account) to use instead of Application Default Credentials, which cover GKE Workload Identity |
+| `t4 run` | `--gcs-prefix` | — | `T4_GCS_PREFIX` | No | key prefix inside the GCS bucket |
 | `t4 run` | `--grpc-keepalive-interval` | `2h0m0s` | `T4_GRPC_KEEPALIVE_INTERVAL` | No | server keepalive ping interval; how often the server pings idle connections |
 | `t4 run` | `--grpc-keepalive-min-time` | `5s` | `T4_GRPC_KEEPALIVE_MIN_TIME` | No | minimum interval the server demands between client keepalive pings |
 | `t4 run` | `--grpc-keepalive-permit-without-stream` | `true` | `T4_GRPC_KEEPALIVE_PERMIT_WITHOUT_STREAM` | No | accept client pings even when no streams are open; required for etcd v3 client compatibility |
@@ -434,10 +473,13 @@ Generated from the CLI flag definitions in Go. Run `go run ./hack/docgen` after 
 | `t4 run` | `--token-ttl` | `300` | `T4_TOKEN_TTL` | No | bearer token TTL in seconds |
 | `t4 run` | `--wal-sync-upload` | — | `T4_WAL_SYNC_UPLOAD` | No | single-node mode: upload WAL segments synchronously before ack (true/false; default true for safety, set false when local storage is durable); a cluster uploads synchronously exactly while no follower is connected |
 | `t4 run` | `--watch-send-timeout` | `30s` | `T4_WATCH_SEND_TIMEOUT` | No | cancel a watch whose server-side send queue blocks for longer than this; clients receive a 'mvcc: watcher is slow' cancellation when possible |
+| `t4 status` | `--gcs-bucket` | — | `T4_GCS_BUCKET` | No | Google Cloud Storage bucket, used through the native GCS API; this or --s3-bucket is required |
+| `t4 status` | `--gcs-credentials-file` | — | `T4_GCS_CREDENTIALS_FILE` | No | Google credentials JSON file (service_account, authorized_user, external_account or impersonated_service_account) to use instead of Application Default Credentials, which cover GKE Workload Identity |
+| `t4 status` | `--gcs-prefix` | — | `T4_GCS_PREFIX` | No | key prefix inside the GCS bucket |
 | `t4 status` | `--object-store-encryption-key-env` | — | `T4_OBJECT_STORE_ENCRYPTION_KEY_ENV` | No | environment variable holding a 32-byte AES-256 object-store encryption key as raw bytes, hex, or base64 |
 | `t4 status` | `--object-store-encryption-key-file` | — | `T4_OBJECT_STORE_ENCRYPTION_KEY_FILE` | No | file containing a 32-byte AES-256 object-store encryption key as raw bytes, hex, or base64 |
 | `t4 status` | `--s3-access-key-id` | — | `T4_S3_ACCESS_KEY_ID` | No | t4 S3 access key ID; when set with --s3-secret-access-key, uses static credentials |
-| `t4 status` | `--s3-bucket` | — | `T4_S3_BUCKET` | Yes | S3 bucket |
+| `t4 status` | `--s3-bucket` | — | `T4_S3_BUCKET` | No | S3 bucket; this or --gcs-bucket is required |
 | `t4 status` | `--s3-ca-bundle` | — | `T4_S3_CA_BUNDLE` | No | PEM CA bundle file to trust for HTTPS to the S3 endpoint; use this for S3-compatible stores running behind a self-signed CA |
 | `t4 status` | `--s3-endpoint` | — | `T4_S3_ENDPOINT` | No | custom S3 endpoint URL, e.g. for S3-compatible stores |
 | `t4 status` | `--s3-prefix` | — | `T4_S3_PREFIX` | No | key prefix inside the S3 bucket |

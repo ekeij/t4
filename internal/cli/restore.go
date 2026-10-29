@@ -23,14 +23,14 @@ func restoreCmd() *cobra.Command {
 
 func restoreListCmd() *cobra.Command {
 	var (
-		s3  *s3Flags
-		enc *objectStoreEncryptionFlags
+		objFlags *objectStoreFlags
+		enc      *objectStoreEncryptionFlags
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List checkpoints available in S3",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, err := newObjectStoreForCommand(cmd.Context(), s3, enc)
+			store, err := newObjectStoreForCommand(cmd.Context(), objFlags, enc)
 			if err != nil {
 				return err
 			}
@@ -62,14 +62,14 @@ func restoreListCmd() *cobra.Command {
 			return nil
 		},
 	}
-	s3 = addS3Flags(cmd, true)
+	objFlags = addObjectStoreFlags(cmd, true)
 	enc = addObjectStoreEncryptionFlags(cmd)
 	return cmd
 }
 
 func restoreCheckpointCmd() *cobra.Command {
 	var (
-		s3            *s3Flags
+		objFlags      *objectStoreFlags
 		enc           *objectStoreEncryptionFlags
 		checkpointKey string
 		dataDir       string
@@ -77,7 +77,7 @@ func restoreCheckpointCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "checkpoint",
 		Short: "Download a checkpoint to a local data directory",
-		Long: `Download an S3 checkpoint to a local data directory so that
+		Long: `Download an S3 or GCS checkpoint to a local data directory so that
 't4 run' can start from it on the next boot.
 
 By default the latest checkpoint is used. Pass --checkpoint to restore
@@ -85,19 +85,19 @@ from a specific earlier revision (use 't4 restore list' to find keys).
 
 After this command succeeds, start the node with:
 
-  t4 run --data-dir <data-dir> [--s3-bucket <bucket>] ...
+  t4 run --data-dir <data-dir> [--s3-bucket|--gcs-bucket <bucket>] ...
 
-Configure --s3-bucket to a different prefix than the source so the
+Configure the bucket with a different prefix than the source so the
 restored node writes to its own namespace and does not overwrite the
 original cluster's data. To stay at the restored revision without
-replaying newer WAL from S3, omit --s3-bucket entirely.`,
+replaying newer WAL from object storage, omit the bucket entirely.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			pebbleDir := filepath.Join(dataDir, "db")
 			if _, err := os.Stat(pebbleDir); err == nil {
 				return fmt.Errorf("data directory %q already contains a Pebble database; remove it first", pebbleDir)
 			}
 
-			store, err := newObjectStoreForCommand(cmd.Context(), s3, enc)
+			store, err := newObjectStoreForCommand(cmd.Context(), objFlags, enc)
 			if err != nil {
 				return err
 			}
@@ -111,7 +111,7 @@ replaying newer WAL from S3, omit --s3-bucket entirely.`,
 					return fmt.Errorf("read manifest: %w", err)
 				}
 				if manifest == nil {
-					return fmt.Errorf("no checkpoints found in s3://%s/%s", s3.Bucket, s3.Prefix)
+					return fmt.Errorf("no checkpoints found in %s", objFlags.url())
 				}
 				key = manifest.CheckpointKey
 				logrus.Infof("using latest checkpoint: %s (rev=%d)", key, manifest.Revision)
@@ -130,11 +130,11 @@ replaying newer WAL from S3, omit --s3-bucket entirely.`,
 			fmt.Fprintf(out, "  term:      %d\n", term)
 			fmt.Fprintf(out, "  data-dir:  %s\n", dataDir)
 			fmt.Fprintf(out, "\nStart the restored node:\n")
-			fmt.Fprintf(out, "  t4 run --data-dir %s [--s3-bucket <new-bucket>] --listen 0.0.0.0:3379\n", dataDir)
+			fmt.Fprintf(out, "  t4 run --data-dir %s [--%s-bucket <new-bucket>] --listen 0.0.0.0:3379\n", dataDir, objFlags.kind())
 			return nil
 		},
 	}
-	s3 = addS3Flags(cmd, true)
+	objFlags = addObjectStoreFlags(cmd, true)
 	enc = addObjectStoreEncryptionFlags(cmd)
 	cmd.Flags().StringVar(&checkpointKey, "checkpoint", "", "checkpoint key to restore (default: latest; use 't4 restore list' to find keys)")
 	cmd.Flags().StringVar(&dataDir, "data-dir", "", "local directory to restore into (required; must not already contain a Pebble database) (env: T4_DATA_DIR)")

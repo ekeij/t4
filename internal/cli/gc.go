@@ -12,9 +12,9 @@ import (
 
 func gcCmd() *cobra.Command {
 	var (
-		s3   *s3Flags
-		enc  *objectStoreEncryptionFlags
-		keep int
+		objFlags *objectStoreFlags
+		enc      *objectStoreEncryptionFlags
+		keep     int
 	)
 	cmd := &cobra.Command{
 		Use:   "gc",
@@ -30,7 +30,7 @@ Three passes are performed in order:
 
 Run this periodically (e.g. once a day) to reclaim S3 storage.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, err := newObjectStoreForCommand(cmd.Context(), s3, enc)
+			store, err := newObjectStoreForCommand(cmd.Context(), objFlags, enc)
 			if err != nil {
 				return err
 			}
@@ -75,7 +75,7 @@ Run this periodically (e.g. once a day) to reclaim S3 storage.`,
 			return nil
 		},
 	}
-	s3 = addS3Flags(cmd, true)
+	objFlags = addObjectStoreFlags(cmd, true)
 	enc = addObjectStoreEncryptionFlags(cmd)
 	cmd.Flags().IntVar(&keep, "keep", 3, "number of most-recent checkpoints to retain")
 	return cmd
