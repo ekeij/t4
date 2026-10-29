@@ -18,7 +18,7 @@ etcd is the standard answer, but operating a consensus cluster is not always the
 
 T4 explores a different tradeoff: keep the familiar key-value and watch primitives, store hot data locally, and use object storage as the durable recovery layer. Nodes can disappear, lose their disks, or be replaced; the database can rebuild from WAL segments and checkpoints in S3-compatible storage.
 
-- **Object-storage durable** — WAL segments and periodic checkpoints are uploaded to S3-compatible object storage. A node that loses its disk recovers automatically.
+- **Object-storage durable** — WAL segments and periodic checkpoints are uploaded to S3-compatible object storage or to Google Cloud Storage through its native API. A node that loses its disk recovers automatically.
 - **Infrastructure primitives** — Revisions, watches, leases, transactions, and prefix scans are built in.
 - **Standalone or embedded** — Run `t4` as a server, or call `t4.Open(cfg)` inside a Go process. No sidecar required.
 - **Multi-node** — Leader elected via an S3 lock. Followers stream the WAL in real time and forward writes transparently.
@@ -73,6 +73,29 @@ node, err := t4.Open(t4.Config{
 })
 ```
 
+### With Google Cloud Storage durability
+
+```go
+// Application Default Credentials: GOOGLE_APPLICATION_CREDENTIALS, gcloud, or
+// the metadata server (GKE Workload Identity).
+store, err := object.NewGCSStoreFromConfig(ctx, object.GCSConfig{
+    Bucket: "my-bucket",
+    Prefix: "t4/",
+})
+if err != nil {
+    return err
+}
+defer store.Close()
+
+node, err := t4.Open(t4.Config{
+    DataDir:     "/var/lib/myapp/t4",
+    ObjectStore: store,
+})
+```
+
+Use `GCSStore`, not `S3Store` pointed at GCS's S3-compatible endpoint: that endpoint ignores the conditional writes leader
+election relies on.
+
 ---
 
 ## Standalone binary
@@ -88,6 +111,10 @@ t4 run --data-dir /var/lib/t4 --listen 0.0.0.0:3379
 # Single node with S3
 t4 run --data-dir /var/lib/t4 --listen 0.0.0.0:3379 \
            --s3-bucket my-bucket --s3-prefix t4/
+
+# Single node with Google Cloud Storage (Application Default Credentials)
+t4 run --data-dir /var/lib/t4 --listen 0.0.0.0:3379 \
+           --gcs-bucket my-bucket --gcs-prefix t4/
 
 # The same configuration can come from environment variables.
 T4_DATA_DIR=/var/lib/t4 \

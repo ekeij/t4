@@ -323,7 +323,8 @@ type VersionedStore interface {
 }
 ```
 
-`object.S3Store` satisfies this interface. S3 versioning must be enabled on the source bucket.
+`object.S3Store` satisfies this interface. S3 versioning must be enabled on the source bucket. `object.GCSStore` satisfies
+it too, with Object Versioning enabled on the bucket; its version IDs are object generations.
 
 When capturing a restore point, pin the checkpoint index, every SST and Pebble metadata object listed in that index, and
 all WAL segments to replay after the checkpoint. Pinning only the checkpoint index is not enough: source checkpoint GC

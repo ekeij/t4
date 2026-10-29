@@ -5,7 +5,7 @@
 | Field                 | Type                               | Default                        | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 |-----------------------|------------------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `DataDir`             | `string`                           | —                              | **Required.** Directory for the Pebble database and local WAL segments. Created if absent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `ObjectStore`         | `object.Store`                     | `nil`                          | S3 or compatible store. `nil` = local-only, single-node mode.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `ObjectStore`         | `object.Store`                     | `nil`                          | S3, GCS or compatible store. `nil` = local-only, single-node mode.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `AncestorStore`       | `object.Store`                     | `nil`                          | Source store for a branch node. SSTs referenced by `AncestorSSTFiles` are fetched from here instead of being re-uploaded.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `BranchPoint`         | `*BranchPoint`                     | `nil`                          | If set, bootstraps the node from a fork of another database. Applied once on first boot; ignored thereafter. See [Branches](api.md#branches).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `RestorePoint`        | `*RestorePoint`                    | `nil`                          | Bootstrap from a specific S3 version (requires S3 versioning). See [Point-in-time restore](api.md#point-in-time-restore-s3-versioning).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -70,7 +70,19 @@ Close() error
 
 Custom WAL implementations must preserve the same durability ordering as the default filesystem WAL.
 
-`pkg/object` provides `NewS3Store` (AWS SDK v2) and `NewMem` (in-memory, for tests).
+`pkg/object` provides `NewS3Store` / `NewS3StoreFromConfig` (S3 and S3-compatible stores), `NewGCSStore` /
+`NewGCSStoreFromConfig` (Google Cloud Storage through its native API) and `NewMem` (in-memory, for tests):
+
+```go
+store, err := object.NewGCSStoreFromConfig(ctx, object.GCSConfig{
+	Bucket: "my-bucket",
+	Prefix: "t4/",
+	// CredentialsFile: "/etc/t4/sa.json", // default: Application Default Credentials
+})
+```
+
+Do not use `S3Store` with GCS's S3-compatible endpoint for a multi-node cluster: it ignores the conditional PUTs leader
+election relies on. See [Operations: Google Cloud Storage](operations.md#google-cloud-storage).
 
 ### Object-store encryption
 
@@ -121,7 +133,7 @@ PutIfMatch(ctx context.Context, key string, r io.Reader, etag string) error // I
 }
 ```
 
-Both `S3Store` and `Mem` implement `ConditionalStore`. If your custom store does not, election falls back to an
+`S3Store`, `GCSStore` and `Mem` implement `ConditionalStore`. If your custom store does not, election falls back to an
 unconditional write + read-back (slightly less race-safe under concurrent startup), and liveness touches fall back to
 unconditional PUT (the Read→Touch split-brain protection is not available).
 
@@ -141,13 +153,18 @@ Most `t4` CLI flags can also be set via `T4_*` environment variables. Command-li
 environment variables. Environment variables are only applied when the corresponding flag was not set explicitly, and
 empty environment variable values are ignored.
 
-Required flags such as `--s3-bucket`, `--branch-id`, and `--data-dir` can be satisfied by their documented environment
-variables.
+Required flags such as `--branch-id` and `--data-dir`, and the bucket (`--s3-bucket` or `--gcs-bucket`) that `t4 branch`,
+`t4 restore`, `t4 gc` and `t4 status` require, can be satisfied by their documented environment variables.
 
 For S3 credentials, `t4` fails closed unless you configure credentials explicitly. Use
 `T4_S3_ACCESS_KEY_ID` + `T4_S3_SECRET_ACCESS_KEY` for static credentials, or set `--s3-profile` / `T4_S3_PROFILE`
 to opt into the AWS shared config chain. If you want the shared `default` profile, set `T4_S3_PROFILE=default`
 explicitly.
+
+For Google Cloud Storage, set `--gcs-bucket` / `T4_GCS_BUCKET` (and optionally `--gcs-prefix` / `T4_GCS_PREFIX`)
+instead of `--s3-bucket`. Credentials come from Application Default Credentials, including GKE Workload Identity,
+unless `--gcs-credentials-file` / `T4_GCS_CREDENTIALS_FILE` names a credentials file. Setting both an S3 and a GCS bucket,
+or mixing `--s3-*` and `--gcs-*` flags, is a startup error. See [Operations: Google Cloud Storage](operations.md#google-cloud-storage).
 
 Example:
 
@@ -517,11 +534,15 @@ Registers a new branch against the source store. Prints the checkpoint key to st
 | `--s3-profile`           | AWS shared config profile (optional)                      |
 | `--s3-access-key-id`     | AWS access key ID (optional)                              |
 | `--s3-secret-access-key` | AWS secret access key (optional)                          |
+| `--gcs-bucket`           | GCS bucket of the source database, instead of `--s3-bucket` |
+| `--gcs-prefix`           | GCS prefix of the source database                           |
+| `--gcs-credentials-file` | Google credentials file (optional; default: ADC)            |
 | `--branch-id`            | Unique identifier for the branch                          |
 | `--checkpoint`           | Fork from a specific checkpoint key instead of the latest |
 
 Environment variables: `T4_S3_BUCKET`, `T4_S3_PREFIX`, `T4_S3_ENDPOINT`, `T4_S3_REGION`, `T4_S3_PROFILE`,
-`T4_S3_ACCESS_KEY_ID`, `T4_S3_SECRET_ACCESS_KEY`, `T4_BRANCH_ID`
+`T4_S3_ACCESS_KEY_ID`, `T4_S3_SECRET_ACCESS_KEY`, `T4_GCS_BUCKET`, `T4_GCS_PREFIX`, `T4_GCS_CREDENTIALS_FILE`,
+`T4_BRANCH_ID`
 
 ### `t4 branch unfork`
 
@@ -543,10 +564,14 @@ longer needed.
 | `--s3-profile`           | AWS shared config profile (optional) |
 | `--s3-access-key-id`     | AWS access key ID (optional)         |
 | `--s3-secret-access-key` | AWS secret access key (optional)     |
+| `--gcs-bucket`           | GCS bucket of the source database, instead of `--s3-bucket` |
+| `--gcs-prefix`           | GCS prefix of the source database                           |
+| `--gcs-credentials-file` | Google credentials file (optional; default: ADC)            |
 | `--branch-id`            | Branch identifier to remove          |
 
 Environment variables: `T4_S3_BUCKET`, `T4_S3_PREFIX`, `T4_S3_ENDPOINT`, `T4_S3_REGION`, `T4_S3_PROFILE`,
-`T4_S3_ACCESS_KEY_ID`, `T4_S3_SECRET_ACCESS_KEY`, `T4_BRANCH_ID`
+`T4_S3_ACCESS_KEY_ID`, `T4_S3_SECRET_ACCESS_KEY`, `T4_GCS_BUCKET`, `T4_GCS_PREFIX`, `T4_GCS_CREDENTIALS_FILE`,
+`T4_BRANCH_ID`
 
 ---
 

@@ -37,6 +37,67 @@ segment already in the store is never overwritten. Multi-node clusters also requ
 for `manifest/latest`. A single node is the only writer of its manifest, so it does not use `If-Match` and runs on
 stores without it, such as older radosgw releases.
 
+> **Warning: do not use GCS's S3-compatible API.** `--s3-endpoint https://storage.googleapis.com` with HMAC keys accepts
+> `If-None-Match` and `If-Match` on PUT and ignores them, so two nodes of a cluster can both win the leader lock
+> (split-brain). It must not be used for a multi-node cluster, and `t4 run` logs a warning when `--s3-endpoint` points
+> there. Use [`--gcs-bucket`](#google-cloud-storage) instead.
+
+### Google Cloud Storage
+
+```bash
+t4 run \
+  --data-dir   /var/lib/t4 \
+  --listen     0.0.0.0:3379 \
+  --gcs-bucket my-bucket \
+  --gcs-prefix t4/
+```
+
+`--gcs-bucket` uses GCS's native JSON API. Conditional writes are generation preconditions (`ifGenerationMatch`), which
+GCS enforces, so leader election is as safe as on S3 and multi-node clusters are supported. `--gcs-bucket` replaces
+`--s3-bucket` on every command (`run`, `branch`, `restore`, `gc`, `status`). Setting both, or mixing `--gcs-*` and
+`--s3-*` flags, is a startup error.
+
+**Credentials.** T4 uses Application Default Credentials: `GOOGLE_APPLICATION_CREDENTIALS`, the file written by
+`gcloud auth application-default login`, or the metadata server on Compute Engine, Cloud Run and GKE (including
+Workload Identity). No key file is needed on GCP. To use a specific credentials file instead, pass
+`--gcs-credentials-file` (`T4_GCS_CREDENTIALS_FILE`). It must be of type `service_account`, `authorized_user`,
+`external_account` (Workload Identity Federation) or `impersonated_service_account`. When `STORAGE_EMULATOR_HOST` is set,
+T4 talks to that emulator without credentials.
+
+**IAM.** Grant each node's identity `roles/storage.objectUser` on the bucket; `roles/storage.objectAdmin` works too. T4
+needs `storage.objects.create`, `storage.objects.get`, `storage.objects.list` and `storage.objects.delete`. GCS also
+requires `delete` to overwrite an object, which T4 does for `leader-lock` and `manifest/latest`. Maintenance commands
+need the same role. With GKE Workload Identity, bind the role to the pod's Kubernetes service account:
+
+```bash
+gcloud storage buckets add-iam-policy-binding gs://my-bucket \
+  --role=roles/storage.objectUser \
+  --member=principal://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/PROJECT_ID.svc.id.goog/subject/ns/NAMESPACE/sa/KSA_NAME
+```
+
+**Bucket settings.**
+
+- GCS allows about one write per second to the same object. T4 writes `leader-lock` at most every 2 s and
+  `manifest/latest` once per checkpoint. T4 retries the 429 responses GCS returns above that rate, with backoff, so a
+  very low `--checkpoint-entries` only slows checkpoints down.
+- Soft delete (on by default for new buckets, 7 days) keeps every overwritten `leader-lock`, and every WAL segment,
+  checkpoint and SST that T4 garbage-collects, for the whole retention period. Consider disabling it on a bucket
+  dedicated to T4: `gcloud storage buckets update gs://my-bucket --clear-soft-delete`.
+- Enable Object Versioning only for [point-in-time restore](#point-in-time-restore-s3-versioning). On GCS, the version IDs
+  of a `RestorePoint` are object generations (`gcloud storage ls -a`).
+- Keep the bucket in the nodes' region: every lock renewal is a GCS round trip.
+
+Embedded use:
+
+```go
+store, err := object.NewGCSStoreFromConfig(ctx, object.GCSConfig{Bucket: "my-bucket", Prefix: "t4/"})
+if err != nil {
+	return err
+}
+defer store.Close()
+node, err := t4.Open(t4.Config{DataDir: "/var/lib/t4", ObjectStore: store})
+```
+
 ### Object-store encryption at rest
 
 Enable client-side encryption for all T4 object-store data with a 32-byte AES-256 key:
@@ -82,7 +143,8 @@ unless the host filesystem or volume encrypts them.
 
 Multi-node mode requires:
 
-1. A shared S3 bucket (leader election lock + WAL archive).
+1. A shared S3 or [GCS](#google-cloud-storage) bucket (leader election lock + WAL archive). The store must enforce
+   conditional writes: GCS's S3-compatible API does not.
 2. Each node has a unique `--node-id` and a `--peer-listen` address reachable by all other nodes.
 
 All nodes run the same command. At startup they race to acquire the S3 leader lock; the winner becomes the leader, the
@@ -1022,7 +1084,8 @@ See [api.md — Point-in-time restore](api.md#point-in-time-restore-s3-versionin
 
 ### Requirements
 
-- S3 versioning must be enabled on the bucket **before** the first write.
+- S3 versioning must be enabled on the bucket **before** the first write. On GCS, enable Object Versioning; a version
+  ID is an object generation.
 
 ### Capturing a restore point
 

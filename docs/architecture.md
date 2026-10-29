@@ -144,7 +144,10 @@ Election uses an S3 object (`leader-lock`) with atomic conditional PUT operation
 3. If **present and owned by another node**: become a follower of the lock's recorded address.
 4. If the conditional PUT succeeds, the election is won. `LastSeenNano` is set to `now()` on the winning write, so the fresh leader is immediately visible as "alive" to any follower checking liveness.
 
-If the store does not implement the `ConditionalStore` interface (optional; see `pkg/object`), the node falls back to an unconditional write + 100 ms read-back to detect a race. All provided stores (`S3Store`, `Mem`) implement `ConditionalStore`.
+If the store does not implement the `ConditionalStore` interface (optional; see `pkg/object`), the node falls back to an unconditional write + 100 ms read-back to detect a race. All provided stores (`S3Store`, `GCSStore`, `Mem`) implement `ConditionalStore`. `GCSStore` expresses the conditional
+PUTs as GCS generation preconditions (`ifGenerationMatch`), and its ETag is the object generation; GCS's S3-compatible
+API ignores `If-None-Match` and `If-Match` and is not safe for a cluster (see
+[GCS object store design](design/gcs-object-store.md)).
 
 **Failure detection:**
 The leader and each follower exchange heartbeats on the WAL stream every 500 ms: the leader sends an empty heartbeat message, the follower repeats its latest ACK. Either side that hears nothing for 2 s drops the stream. This catches partitions that drop packets without breaking the TCP connection, which would otherwise leave both sides waiting indefinitely. When the leader drops a silent follower, writes stop waiting for that follower's ACK. As a backstop for a leader blocked sending to a follower that stopped reading, the peer server also uses gRPC keepalive pings, which close a connection that does not answer within 2 s.
