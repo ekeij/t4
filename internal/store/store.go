@@ -1327,21 +1327,73 @@ func (s *Store) nearHead(rev int64) bool {
 // its newest one at or before the compaction revision, and rev is at or
 // above it.
 func undoAfter(snap pebble.Reader, prefix, fromKey string, rev int64, match func(string) bool) (map[string]*KeyValue, error) {
+	undo := make(map[string]*KeyValue)
+	lk := make([]byte, logKeyScratchSize)
+	err := scanChangesAfter(snap, prefix, fromKey, rev, match, func(key string, prevRev int64, create bool) error {
+		existed, ok := undoAnchor(prevRev, create, rev)
+		if !ok {
+			return errUndoChain
+		}
+		if !existed {
+			undo[key] = nil
+			return nil
+		}
+		prev, err := logEntryAt(snap, lk, key, prevRev)
+		if err != nil || prev == nil {
+			return errUndoChain
+		}
+		undo[key] = prev
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return undo, nil
+}
+
+// presenceAfter is undoAfter for a count: which keys changed after rev, and
+// whether each was live then, without reading any of their records. See
+// countFromPresence for why a count needs no more than that.
+func presenceAfter(snap pebble.Reader, prefix, fromKey string, rev int64, match func(string) bool) (map[string]bool, error) {
+	present := make(map[string]bool)
+	err := scanChangesAfter(snap, prefix, fromKey, rev, match, func(key string, prevRev int64, create bool) error {
+		existed, ok := undoAnchor(prevRev, create, rev)
+		if !ok {
+			return errUndoChain
+		}
+		present[key] = existed
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return present, nil
+}
+
+// scanChangesAfter visits the first change after rev to each key matching
+// prefix, fromKey and match, which is the change that records where the key
+// stood at rev.
+func scanChangesAfter(
+	snap pebble.Reader,
+	prefix, fromKey string,
+	rev int64,
+	match func(string) bool,
+	visit func(key string, prevRev int64, create bool) error,
+) error {
 	iter, err := snap.NewIter(&pebble.IterOptions{LowerBound: logKey(rev + 1), UpperBound: logUpper})
 	if err != nil {
-		return nil, fmt.Errorf("store: undo scan iter: %w", err)
+		return fmt.Errorf("store: undo scan iter: %w", err)
 	}
 	defer func() { _ = iter.Close() }()
 
-	undo := make(map[string]*KeyValue)
-	lk := make([]byte, 9)
+	seen := make(map[string]struct{})
 	for iter.First(); iter.Valid(); iter.Next() {
 		r, err := decodeRecord(iter.Value())
 		if err != nil {
-			return nil, err
+			return err
 		}
 		// Filter on the aliased key bytes; the comparisons don't allocate.
-		if _, seen := undo[string(r.key)]; seen || len(r.key) < len(prefix) ||
+		if _, ok := seen[string(r.key)]; ok || len(r.key) < len(prefix) ||
 			string(r.key[:len(prefix)]) != prefix || string(r.key) < fromKey {
 			continue
 		}
@@ -1349,23 +1401,12 @@ func undoAfter(snap pebble.Reader, prefix, fromKey string, rev int64, match func
 		if match != nil && !match(key) {
 			continue
 		}
-		if r.prevRevision == 0 {
-			if !r.create {
-				return nil, errUndoChain
-			}
-			undo[key] = nil
-			continue
+		seen[key] = struct{}{}
+		if err := visit(key, r.prevRevision, r.create); err != nil {
+			return err
 		}
-		if r.prevRevision > rev {
-			return nil, errUndoChain
-		}
-		prev, err := logEntryAt(snap, lk, key, r.prevRevision)
-		if err != nil || prev == nil {
-			return nil, errUndoChain
-		}
-		undo[key] = prev
 	}
-	return undo, iter.Error()
+	return iter.Error()
 }
 
 func (s *Store) getAtFromHead(key string, rev int64) (*KeyValue, error) {
@@ -1410,11 +1451,11 @@ func (s *Store) countAtFromHead(prefix, fromKey string, rev int64) (int64, error
 	snap := s.db.NewSnapshot()
 	defer func() { _ = snap.Close() }()
 
-	undo, err := undoAfter(snap, prefix, fromKey, rev, nil)
+	present, err := presenceAfter(snap, prefix, fromKey, rev, nil)
 	if err != nil {
 		return 0, err
 	}
-	return countFromUndo(snap, prefix, fromKey, undo)
+	return countFromPresence(snap, prefix, fromKey, present)
 }
 
 func (s *Store) getAtRevision(key string, targetRev int64) (*KeyValue, error) {
@@ -1558,30 +1599,145 @@ func listCurrentFrom(db pebble.Reader, prefix, fromKey string, limit int64, keys
 	defer func() { _ = iter.Close() }()
 
 	var out []*KeyValue
-	lk := make([]byte, logKeyScratchSize)
 	slab := newKVSlab(limit)
+	// The index yields keys in key order, but the log is keyed by revision, so
+	// reading each record as the scan reaches it means a random seek per key.
+	// Collect what has to be read and fetch it in log order afterwards; see
+	// fetchLogRecords.
+	var todo []logTarget
+	if limit > 0 {
+		todo = make([]logTarget, 0, limit)
+	}
 	for iter.First(); iter.Valid(); iter.Next() {
 		if limit > 0 && int64(len(out)) >= limit {
 			break
 		}
 		k := string(iter.Key()[1:]) // strip 'i' prefix
 		ie := decodeIdx(iter.Value())
+		kv := slab.next()
 		if keysOnly && ie.v2 {
-			kv := slab.next()
+			// Served from the index; no log record to read.
 			idxToKeysOnlyKVInto(kv, k, ie)
 			out = append(out, kv)
 			continue
 		}
-		kv, err := logEntryForIdxInto(db, lk, k, ie, slab.next())
-		if err != nil {
-			return nil, err
-		}
-		if keysOnly {
-			stripToKeysOnly(kv)
-		}
+		// Hold the key on the KeyValue rather than on the target, so the
+		// target costs no second string header per entry.
+		kv.Key = k
+		todo = append(todo, logTarget{dst: kv, ie: ie})
 		out = append(out, kv)
 	}
-	return out, iter.Error()
+	if err := iter.Error(); err != nil {
+		return nil, err
+	}
+	if err := fetchLogRecords(db, todo, keysOnly); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// logTarget is one record fetchLogRecords has to read, and the KeyValue to
+// read it into. dst.Key is already set, which is both the key to look for and
+// where the result belongs: filling dst in place keeps the caller's ordering
+// whatever order the records are read in.
+type logTarget struct {
+	dst *KeyValue
+	ie  idxEntry
+}
+
+// listLogFallbacks counts records the batched fetch could not take from its
+// own iterator and had to look up one at a time.
+//
+// A fallback is correct, just slower, which is why it needs counting: a change
+// that stops the fast route finding records — a wrong iterator bound, say —
+// would cost the whole speedup without failing anything. On a healthy store
+// reading records the index points at, this stays where it started.
+var listLogFallbacks atomic.Int64
+
+// fetchLogRecords reads the log record each target points at, in log-key
+// order, through a single forward-seeking iterator.
+//
+// Log keys are 'l' + revision, so sorting the targets by revision turns what
+// would be one independent point lookup per key — each re-seeking an SSTable's
+// two-level index from the top — into one walk forward. On a collection of
+// 5000 4 KiB values that is ~31% off an unpaginated list, and ~39% off a
+// paginated walk of 20000 keys.
+//
+// Anything the walk cannot answer directly falls back to logEntryForIdxInto,
+// which holds the cases where the index does not simply point at the record:
+// v1 entries, a revision whose record is missing, and a record holding a
+// different key.
+func fetchLogRecords(db pebble.Reader, todo []logTarget, keysOnly bool) error {
+	if len(todo) == 0 {
+		return nil
+	}
+	lk := make([]byte, logKeyScratchSize)
+	sort.Slice(todo, func(a, b int) bool {
+		if todo[a].ie.rev != todo[b].ie.rev {
+			return todo[a].ie.rev < todo[b].ie.rev
+		}
+		return todo[a].ie.sub < todo[b].ie.sub
+	})
+
+	// The upper bound is the first key of the next revision, which sorts above
+	// every sub-keyed record of the last one.
+	iter, err := db.NewIter(&pebble.IterOptions{
+		LowerBound: logKey(todo[0].ie.rev),
+		UpperBound: logKey(todo[len(todo)-1].ie.rev + 1),
+	})
+	if err != nil {
+		return fmt.Errorf("store: list log iter: %w", err)
+	}
+	defer func() { _ = iter.Close() }()
+
+	for _, t := range todo {
+		key := t.dst.Key
+		if filled, err := fillFromLogIter(iter, lk, key, t.ie, t.dst); err != nil {
+			return err
+		} else if !filled {
+			listLogFallbacks.Add(1)
+			kv, err := logEntryForIdxInto(db, lk, key, t.ie, t.dst)
+			if err != nil {
+				return err
+			}
+			// Its fallbacks answer from a KeyValue of their own rather than
+			// filling dst, and dst is already in the caller's result.
+			if kv != t.dst {
+				*t.dst = *kv
+			}
+		}
+		if keysOnly {
+			stripToKeysOnly(t.dst)
+		}
+	}
+	return iter.Error()
+}
+
+// fillFromLogIter seeks iter to the record ie points at and decodes it into
+// dst, reporting whether it did. A false return means the record was not where
+// the index said, which is for the caller's slower path to resolve.
+func fillFromLogIter(iter *pebble.Iterator, lk []byte, key string, ie idxEntry, dst *KeyValue) (bool, error) {
+	if !ie.v2 {
+		return false, nil
+	}
+	k := lk[:9]
+	putLogKey(k, ie.rev)
+	if ie.sub != idxSubNone {
+		k = lk[:11]
+		binary.BigEndian.PutUint16(k[9:], ie.sub)
+	}
+	if !iter.SeekGE(k) || string(iter.Key()) != string(k) {
+		return false, nil
+	}
+	r, err := decodeRecord(iter.Value())
+	if err != nil {
+		return false, err
+	}
+	if string(r.key) != key {
+		return false, nil
+	}
+	viewToKVInto(dst, key, ie.rev, &r)
+	return true, nil
 }
 
 // Count returns the number of live keys with the given prefix.
